@@ -161,7 +161,7 @@ export class MapController {
 
   private apply(s: AppState, prev: AppState): void {
     if (s.filters !== prev.filters) {
-      for (const id of PARCEL_LAYERS) this.map.setFilter(id, layerFilter(id, s.filters, this.manifest));
+      for (const id of PARCEL_LAYERS) this.map.setFilter(id, layerFilter(id, s.filters));
     }
     if (s.extrude !== prev.extrude) {
       const flat = s.extrude === 'flat';

@@ -111,6 +111,17 @@ def edge_bands(geoms: list, width_m: float) -> list:
     return out
 
 
+def polygon_features(records: list[dict]) -> list[tuple]:
+    """Tile features for the parcel polygons, plus their roof rims (`e: 1`, max-zoom tiles only).
+
+    Rims share the parcel's feature id, so hover / selection feature-state lights both at once.
+    """
+    feats = [(r["fid"], tile_properties(r), r["geometry"]) for r in records]
+    rims = edge_bands([r["geometry"] for r in records], RIM_WIDTH_M)
+    return feats + [(r["fid"], {**props, "e": 1}, band, RIM_ZOOM)
+                    for r, (_, props, _), band in zip(records, feats, rims) if band is not None]
+
+
 def clean_out_dir(out_dir: Path) -> None:
     """Remove only artifacts this module writes (never the whole directory)."""
     for name in _ARTIFACT_FILES:
@@ -129,7 +140,6 @@ def publish(
     attribution: str,
     tax_roll_year: int | None = None,
     as_of_year: int = AS_OF_YEAR,
-    sales_from: int | None = None,
     shard_hex: int = 1,
     tiler: str = "auto",
     write_geojson: bool = False,
@@ -183,11 +193,7 @@ def publish(
     log(f"  shards: {len(detail)} parcel ({detail_bytes / 1e6:.1f} MB), {len(owners)} owner ({owner_bytes / 1e6:.1f} MB)")
 
     # 5. Vector tiles.
-    poly_feats = [(r["fid"], tile_properties(r), r["geometry"]) for r in records]
-    # Rims share the parcel's feature id, so hover / selection feature-state lights both at once.
-    rims = edge_bands([r["geometry"] for r in records], RIM_WIDTH_M)
-    poly_feats += [(r["fid"], {**props, "e": 1}, band, RIM_ZOOM)
-                   for r, (_, props, _), band in zip(records, poly_feats, rims) if band is not None]
+    poly_feats = polygon_features(records)
     point_feats = [(r["fid"], point_properties(r), shapely.Point(r["lon"], r["lat"])) for r in records]
     if tiler == "auto":
         tiler = "tippecanoe" if tippecanoe_path() else ("python" if python_tiler_available() else "none")
@@ -235,13 +241,13 @@ def publish(
     # 6. Manifest.
     manifest = build_manifest(records, names_idx, addrs_idx, source_kind=source_kind, source_label=source_label,
                               attribution=attribution, tax_roll_year=tax_roll_year, as_of_year=as_of_year,
-                              sales_from=sales_from, shard_hex=shard_hex, tiler=tiler)
+                              shard_hex=shard_hex, tiler=tiler)
     _dump(out_dir / "manifest.json", manifest)
     return manifest
 
 
 def build_manifest(records, names_idx, addrs_idx, *, source_kind, source_label, attribution, tax_roll_year,
-                   as_of_year, shard_hex, tiler, sales_from=None) -> dict:
+                   as_of_year, shard_hex, tiler) -> dict:
     import shapely
 
     bounds = [round(v, 5) for v in shapely.total_bounds([r["geometry"] for r in records])]
@@ -298,8 +304,6 @@ def build_manifest(records, names_idx, addrs_idx, *, source_kind, source_label, 
             "attribution": attribution,
             "tax_roll_year": tax_roll_year,
             "as_of_year": as_of_year,
-            # Set when the source only carries recent sales: "no sale" then means "none since this year".
-            "sales_from": sales_from,
         },
         "bounds": bounds,
         "counties": counties,

@@ -30,21 +30,17 @@ from __future__ import annotations
 import argparse
 import gzip
 import hashlib
-import http.client
 import json
-import random
-import ssl
 import sys
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from pa2 import arcgis  # noqa: E402
+from pa2.arcgis import QueryFailed  # noqa: E402
 from pa2.config import AS_OF_YEAR, COUNTIES, COUNTY_CODES, OUT_DIR, RAW_DIR, WEB_DATA_DIR  # noqa: E402
 from pa2.dor_codes import ASSET_CLASSES, classify, normalize_use_code  # noqa: E402
 from pa2.util import clean_str, norm_parcel_id, to_float, to_int  # noqa: E402
@@ -76,66 +72,9 @@ OUT_FIELDS = [
 ]
 
 
-def _ssl_context() -> ssl.SSLContext:
-    try:
-        import certifi
-
-        return ssl.create_default_context(cafile=certifi.where())
-    except ImportError:  # system Pythons usually have a CA bundle already
-        return ssl.create_default_context()
-
-
-SSL_CONTEXT = _ssl_context()
-
-
-class ServiceError(RuntimeError):
-    pass
-
-
-class QueryFailed(RuntimeError):
-    """Every retry of one request failed."""
-
-
-def _describe(exc: BaseException | None) -> str:
-    if isinstance(exc, urllib.error.HTTPError):
-        return f"HTTP {exc.code} {exc.reason}"
-    if isinstance(exc, urllib.error.URLError):
-        return f"network error: {exc.reason}"
-    return f"{type(exc).__name__}: {exc}"[:200]
-
-
 def query(params: dict, *, attempts: int = 7, label: str = "") -> dict:
-    """POST a query to the FeatureServer; retry transient failures with backoff."""
-    body = urllib.parse.urlencode(params).encode()
-    last: BaseException | None = None
-    for attempt in range(attempts):
-        if attempt:
-            time.sleep(min(2**attempt, 45) + random.random())
-        req = urllib.request.Request(
-            f"{SERVICE}/query",
-            data=body,
-            headers={
-                "User-Agent": "pa2-pipeline/0.1",
-                "Accept-Encoding": "gzip",
-                "Content-Type": "application/x-www-form-urlencoded",
-            },
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=180, context=SSL_CONTEXT) as resp:
-                raw = resp.read()
-            if raw[:2] == b"\x1f\x8b":
-                raw = gzip.decompress(raw)
-            data = json.loads(raw)
-            if isinstance(data, dict) and "error" in data:
-                raise ServiceError(json.dumps(data["error"])[:300])
-            return data
-        # OSError covers URLError/HTTPError, timeouts, resets and SSL errors; ValueError covers bad JSON;
-        # HTTPException covers truncated bodies (IncompleteRead); EOFError a truncated gzip stream.
-        except (OSError, EOFError, ValueError, http.client.HTTPException, ServiceError) as exc:
-            last = exc
-            if label:
-                print(f"    {label}: {_describe(exc)} (attempt {attempt + 1}/{attempts})", file=sys.stderr, flush=True)
-    raise QueryFailed(f"FeatureServer query failed after {attempts} attempts: {_describe(last)}")
+    """POST a query to the cadastral FeatureServer (retries with backoff, see pa2.arcgis)."""
+    return arcgis.query(f"{SERVICE}/query", params, attempts=attempts, label=label)
 
 
 def code_clause(codes: list[str]) -> str:
@@ -321,41 +260,121 @@ def to_record(feature: dict, min_sale_price: int) -> dict | None:
     }
 
 
-def load_sdf_history(patterns: list[str], counties: list[int], min_price: int) -> tuple[dict, int | None]:
-    """Latest sale per (county, parcel ID) from FDOR SDF files of earlier rolls, and the year they start.
+def load_sdf_history(patterns: list[str], counties: list[int], min_price: int) -> tuple[dict, dict[int, int]]:
+    """Latest priced sale per (county, parcel ID) from FDOR SDF files, and where each county's coverage starts.
 
-    The cadastral layer only carries the current roll's sales window, so hold periods need these.
-    Each roll's SDF covers roughly the year before it; the start year is the 0.5th percentile of
-    sale years, so a few late-recorded older deeds do not overstate the coverage.
+    The FDOR portal only posts the current roll, but SDF files of earlier rolls (e.g. from a public
+    records request) work too. Each roll's SDF covers roughly the year before it; a county's start year
+    is the 0.5th percentile of its sale years, so a few late-recorded older deeds do not overstate it.
     """
     if not patterns:
-        return {}, None
+        return {}, {}
     import glob
 
     import pandas as pd
 
     from pa2 import fdor
+    from pa2.county_sales import Sale
 
     paths = sorted({Path(p) for pat in patterns for p in (glob.glob(pat) or [pat]) if Path(p).is_file()})
     if not paths:
         raise SystemExit(f"--sdf matched no files: {' '.join(patterns)}")
     sdf = fdor.read_sdf(paths, counties)
     if sdf is None or not len(sdf):
-        return {}, None
+        return {}, {}
     sdf["year"] = pd.to_numeric(sdf["SALE_YR"], errors="coerce")
     sdf["month"] = pd.to_numeric(sdf["SALE_MO"], errors="coerce").fillna(0)
     sdf["price"] = pd.to_numeric(sdf["SALE_PRC"].astype(str).str.replace(r"[$,]", "", regex=True), errors="coerce")
     sdf = sdf[(sdf["year"] >= 1900) & (sdf["price"] >= min_price) & (sdf["pid"] != "")]
     if not len(sdf):
-        return {}, None
-    start = int(sdf["year"].quantile(0.005))
+        return {}, {}
+    starts = {int(co): int(y) for co, y in sdf.groupby("CO_NO")["year"].quantile(0.005).items()}
     sdf = sdf.sort_values(["CO_NO", "pid", "year", "month", "price"]).drop_duplicates(["CO_NO", "pid"], keep="last")
     latest = {
-        (int(co), pid): (int(y), int(m), int(p), clean_str(q) or None)
+        (int(co), pid): Sale(int(y), int(m), int(p), clean_str(q) or None)
         for co, pid, y, m, p, q in sdf[["CO_NO", "pid", "year", "month", "price", "QUAL_CD"]].itertuples(index=False)
     }
-    print(f"  SDF history: {len(paths)} file(s), latest sale for {len(latest):,} parcels, coverage from {start}")
-    return latest, start
+    print(f"  SDF history: {len(paths)} file(s), latest sale for {len(latest):,} parcels, coverage from {starts}")
+    return latest, starts
+
+
+def merge_sales(records: dict[tuple[int, str], dict], args, counties: list[int]) -> None:
+    """Fill each record's last priced sale from every source, or the year since which none is on record.
+
+    Sources: the roll's own sale slots (already on the records), the county property appraisers
+    (pa2.county_sales) and optional FDOR SDF files. The latest priced sale wins. Without one, each
+    source's "none since" year still bounds the hold period from below; the earliest such year is
+    kept as `no_sale_since` (hold >= as_of_year - that year).
+    """
+    from collections import defaultdict
+
+    from pa2 import county_sales
+    from pa2.county_sales import Sale, SaleFacts
+
+    claims: dict[tuple[int, str], list[int]] = defaultdict(list)
+    supplied: Counter[str] = Counter()
+
+    # The roll's two sale slots list every sale of its sales window, so a record without one had no
+    # sale in that window: a "none since" claim from the window's first year (2025 on the 2026 roll).
+    window_from = min((r["last_sale_year"] for r in records.values() if r["last_sale_year"]), default=None)
+    if window_from:
+        for key, rec in records.items():
+            if not rec["last_sale_year"]:
+                claims[key].append(window_from)
+
+    def offer(source: str, key: tuple[int, str], facts: SaleFacts) -> None:
+        rec = records.get(key)
+        if rec is None:
+            return
+        s = facts.last
+        if s is not None:
+            if rec["last_sale_year"] is None or s.key > (rec["last_sale_year"], rec["last_sale_month"] or 0):
+                rec.update(last_sale_year=s.year, last_sale_month=s.month or None, last_sale_price=s.price,
+                           last_sale_qual_cd=s.qual)
+                supplied[source] += 1
+        elif facts.none_since is not None:
+            claims[key].append(facts.none_since)
+
+    if not args.no_county_sales:
+        root = args.county_sales_dir
+        by_county = {co: {pid for (c, pid) in records if c == co} for co in counties}
+        if by_county.get(60):
+            facts = county_sales.palm_beach(sorted(by_county[60]), root / "palm_beach" / "latest_transfer.json.gz",
+                                            args.min_sale_price, refresh=args.refresh_sales)
+            for pid, f in facts.items():
+                offer("Palm Beach", (60, pid), f)
+            print(f"  Palm Beach: latest transfer for {len(facts):,} of {len(by_county[60]):,} parcels")
+        for co, name, reader, patterns in (
+            (53, "Martin", county_sales.martin, ("*transfer*.zip", "*transfer*.csv")),
+            (66, "St. Lucie", county_sales.st_lucie, ("Transactions*.zip", "*ransaction*.zip")),
+        ):
+            if not by_county.get(co):
+                continue
+            path = county_sales.find_export(root / ("martin" if co == 53 else "stlucie"), patterns)
+            if path is None:
+                print(f"  {name}: no sales export under {root} (see README); its hold periods stay at the roll window")
+                continue
+            facts = reader(path, by_county[co], args.min_sale_price)
+            for pid, f in facts.items():
+                offer(name, (co, pid), f)
+            print(f"  {name}: {path.name} has transfers for {len(facts):,} of {len(by_county[co]):,} parcels")
+
+    history, starts = load_sdf_history(args.sdf, counties, args.min_sale_price)
+    for key, s in history.items():
+        offer("SDF", key, SaleFacts(s))
+    for key, rec in records.items():
+        if key[0] in starts and not rec["last_sale_year"]:
+            claims[key].append(starts[key[0]])
+
+    floors = 0
+    for key, rec in records.items():
+        rec["no_sale_since"] = min(claims[key]) if not rec["last_sale_year"] and claims.get(key) else None
+        floors += rec["no_sale_since"] is not None
+    known = sum(1 for r in records.values() if r["last_sale_year"])
+    n = len(records)
+    print(f"  sales: last priced sale known for {known:,} parcels ({known / n:.0%}); "
+          f"a 'none since' minimum for {floors:,} more ({floors / n:.0%}); "
+          f"newer sales supplied by {dict(supplied) or 'none'}")
 
 
 def main() -> int:
@@ -373,9 +392,14 @@ def main() -> int:
     ap.add_argument("--simplify", type=float, default=0.000005,
                     help="server-side maxAllowableOffset in degrees (default ~0.5 m; 0 = full detail)")
     ap.add_argument("--min-sale-price", type=int, default=100, help="ignore nominal transfers below this")
+    ap.add_argument("--county-sales-dir", type=Path, default=RAW_DIR / "county_sales",
+                    help="county sale-history exports: martin/real_transfers.zip, stlucie/Transactions.zip "
+                         "(Palm Beach is queried from the county GIS and cached in palm_beach/)")
+    ap.add_argument("--no-county-sales", action="store_true",
+                    help="skip the county sale histories (hold periods then only cover the roll's sales window)")
+    ap.add_argument("--refresh-sales", action="store_true", help="re-query Palm Beach's latest transfers")
     ap.add_argument("--sdf", nargs="*", default=[], metavar="PATH",
-                    help="FDOR SDF files from earlier rolls (CSV or the portal's zips; globs ok). The cadastral layer "
-                         "only has the current roll's sales window, so these extend the history behind hold periods")
+                    help="FDOR SDF files of earlier rolls, if you have them (CSV or zips; globs ok)")
     ap.add_argument("--as-of-year", type=int, default=AS_OF_YEAR, help="hold period = this year - last sale year")
     ap.add_argument("--shard-hex", type=int, default=2, help="hex chars per detail/owner shard (2 = 256 files)")
     ap.add_argument("--tiler", choices=["auto", "tippecanoe", "python"], default="auto")
@@ -474,16 +498,7 @@ def main() -> int:
     recs = list(records.values())
     print(f"{len(recs):,} parcels ({merged} multi-part pieces merged, {skipped} without geometry/ID skipped)")
 
-    history, history_from = load_sdf_history(args.sdf, counties, args.min_sale_price)
-    if history:
-        newer = 0
-        for key, rec in records.items():
-            s = history.get(key)
-            if s and (rec["last_sale_year"] is None or s[:2] > (rec["last_sale_year"], rec["last_sale_month"] or 0)):
-                rec["last_sale_year"], rec["last_sale_month"] = s[0], s[1] or None
-                rec["last_sale_price"], rec["last_sale_qual_cd"] = s[2], s[3]
-                newer += 1
-        print(f"  SDF history supplied the last sale for {newer:,} parcels")
+    merge_sales(records, args, counties)
 
     by_class = Counter(classify(normalize_use_code(r["use_code"])) for r in recs)
     by_county = Counter(r["county_code"] for r in recs)
@@ -495,14 +510,6 @@ def main() -> int:
 
     roll = Counter(r["tax_roll_year"] for r in recs if r["tax_roll_year"]).most_common(1)
     roll_year = roll[0][0] if roll else None
-    # The cadastral layer only carries the roll's two most recent sale slots, which cover the current
-    # sales window (2025-26 on the 2026 roll), not a full history: record where that window starts.
-    sale_years = [r["last_sale_year"] for r in recs if r["last_sale_year"]]
-    sales_from = min(sale_years) if sale_years else None
-    if history_from is not None:
-        sales_from = min(history_from, sales_from or history_from)
-    with_sale = len(sale_years)
-    print(f"  sales: {with_sale:,} parcels ({with_sale / len(recs):.0%}) carry a sale; sale data covers {sales_from} on")
     manifest = publish(
         recs,
         args.out,
@@ -511,7 +518,6 @@ def main() -> int:
         attribution=ATTRIBUTION,
         tax_roll_year=roll_year,
         as_of_year=args.as_of_year,
-        sales_from=sales_from,
         shard_hex=args.shard_hex,
         tiler=args.tiler,
         write_geojson=False,

@@ -190,20 +190,17 @@ export function rimHeights(mode: ExtrudeMode): { base: Expr | number; top: Expr 
 }
 
 /**
- * Hold period every unsold parcel is known to have when the source only carries recent sales
- * (no sale since `sales_from` => held at least as_of_year - sales_from years); -1 = unknown.
+ * Hold period for screening: the known one, else the parcel's lower bound `hf` (no priced sale is on
+ * record since as_of_year - hf, e.g. after a $10 transfer), else -1 (unknown: never passes).
  */
-export function holdFloor(manifest: Manifest): number {
-  const { sales_from: from, as_of_year: asOf } = manifest.source;
-  return from ? Math.max(asOf - from, 0) : -1;
-}
+const HOLD_OR_FLOOR: Expr = ['number', ['coalesce', ['get', 'hold'], ['get', 'hf']], -1];
 
 /** Screening filters; `rim` selects the roof-rim features instead of the parcels themselves. */
-export function filterExpr(f: Filters, part: 'body' | 'rim' = 'body', unsoldHold = -1): FilterSpecification {
+export function filterExpr(f: Filters, part: 'body' | 'rim' = 'body'): FilterSpecification {
   const all: unknown[] = ['all', part === 'rim' ? IS_RIM : NOT_RIM];
   if (f.counties.length) all.push(['in', ['get', 'co'], ['literal', f.counties]]);
   if (f.classes.length) all.push(['in', ['get', 'cls'], ['literal', f.classes]]);
-  if (f.minHold > 0) all.push(['>=', num('hold', unsoldHold), f.minHold]);
+  if (f.minHold > 0) all.push(['>=', HOLD_OR_FLOOR, f.minHold]);
   const lotAc = LOT_STEPS_AC[f.lotStep] ?? 0;
   if (lotAc > 0) all.push(['>=', num('lot', 0), lotAc * 43560]);
   const btl = BTL_STEPS[f.btlStep] ?? Infinity;
@@ -228,8 +225,8 @@ export function rimOpacity(s: AppState, rimMin: number): Expr {
 }
 
 /** Filter for a parcel layer id (the rim layer gets the rim variant). */
-export function layerFilter(id: string, f: Filters, manifest: Manifest): FilterSpecification {
-  return filterExpr(f, id === L_RIM ? 'rim' : 'body', holdFloor(manifest));
+export function layerFilter(id: string, f: Filters): FilterSpecification {
+  return filterExpr(f, id === L_RIM ? 'rim' : 'body');
 }
 
 /** "4901" over "151K SF": house number + building size from the centroid layer. */
@@ -246,7 +243,7 @@ export function parcelLayers(manifest: Manifest, s: AppState, vector: boolean): 
   const polyMin = manifest.tiles.polygons.minzoom;
   const poly = vector ? { source: SRC_POLY, 'source-layer': manifest.tiles.polygons.layer } : { source: SRC_POLY };
   const pts = vector ? { source: SRC_PTS, 'source-layer': manifest.tiles.points.layer } : { source: SRC_PTS };
-  const filter = layerFilter(L_FLAT, s.filters, manifest);
+  const filter = layerFilter(L_FLAT, s.filters);
   const flat = s.extrude === 'flat';
   const color = colorExpr(manifest, s);
   const rimMin = manifest.tiles.polygons.rim_minzoom;
@@ -278,7 +275,7 @@ export function parcelLayers(manifest: Manifest, s: AppState, vector: boolean): 
       },
     },
     {
-      id: L_RIM, type: 'fill-extrusion', ...poly, minzoom: rimMin ?? 24, filter: layerFilter(L_RIM, s.filters, manifest),
+      id: L_RIM, type: 'fill-extrusion', ...poly, minzoom: rimMin ?? 24, filter: layerFilter(L_RIM, s.filters),
       layout: { visibility: flat || rimMin == null ? 'none' : 'visible' },
       paint: {
         'fill-extrusion-color': rimColor(s),

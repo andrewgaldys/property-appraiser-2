@@ -48,15 +48,16 @@ export function holdTier(hold: number | null): HoldTier {
 }
 
 /**
- * `salesFrom`: first year of the source's sale window (the statewide cadastral layer only carries
- * the roll's recent sales), so "no sale" there means "none since then", not "never sold".
+ * Without a priced sale on record, `no_sale_since` still says how long none has happened (e.g. the
+ * county shows only a later $10 transfer), so the hold is at least as_of_year minus that year.
  */
-export function holdCaption(r: ParcelRecord, salesFrom?: number | null): string {
-  if (r.hold_period_years == null) return salesFrom ? `No sale since ${salesFrom} (earlier sales not in this source)` : 'No sale on record';
-  return `Held since ${saleDate(r.last_sale_year, r.last_sale_month)}`;
+export function holdCaption(r: ParcelRecord): string {
+  if (r.hold_period_years != null) return `Held since ${saleDate(r.last_sale_year, r.last_sale_month)}`;
+  return r.no_sale_since ? `No priced sale on record since ${r.no_sale_since}` : 'No sale on record';
 }
 
-export const noSaleShort = (salesFrom?: number | null): string => (salesFrom ? `no sale since ${salesFrom}` : 'no sale on record');
+export const noSaleShort = (sinceYear?: number | null): string =>
+  sinceYear ? `no priced sale since ${sinceYear}` : 'no sale on record';
 
 /** Factual screening flags derived from the record (no recommendations). */
 export function signals(r: ParcelRecord): string[] {

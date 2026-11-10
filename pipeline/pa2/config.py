@@ -55,6 +55,7 @@ TILE_FIELDS: dict[str, str] = {
     "last_sale_price": "sp",
     "last_sale_year": "sy",
     "hold_period_years": "hold",
+    "hold_floor_years": "hf",
     "owner_name_key": "onk",
     "owner_addr_key": "oak",
 }
@@ -63,7 +64,7 @@ TILE_FIELDS: dict[str, str] = {
 # map needs to filter, color, highlight and label; the tooltip fetches the rest on demand.
 POINT_FIELDS: list[str] = [
     "parcel_id", "county_code", "asset_class", "use_code", "just_value", "tot_lvg_area", "lnd_sqfoot",
-    "no_res_unts", "hold_period_years", "land_to_value_ratio", "bldg_to_land_ratio",
+    "no_res_unts", "hold_period_years", "hold_floor_years", "land_to_value_ratio", "bldg_to_land_ratio",
     "owner_name_key", "owner_addr_key",
 ]
 
@@ -104,6 +105,8 @@ DETAIL_FIELDS: list[str] = [
     "last_sale_qual_cd",
     "last_sale_qualified",
     "hold_period_years",
+    "no_sale_since",
+    "hold_floor_years",
     "owner_name_key",
     "owner_addr_key",
     "legal_desc",

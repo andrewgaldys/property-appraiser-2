@@ -80,7 +80,7 @@ export class Brief {
         h('div', { class: 'bp-key' }, h('span', null, 'Just value'), h('b', null, moneyFull(r.just_value))),
         h('div', { class: 'bp-key' }, h('span', null, 'Land / improvements'), h('b', null, `${pct(landShare)} / ${pct(jv > 0 ? 1 - landShare : 0)}`)),
         h('div', { class: 'bp-key' }, h('span', null, 'Last sale'), h('b', null, moneyFull(r.last_sale_price)), h('small', null, saleDate(r.last_sale_year, r.last_sale_month))),
-        h('div', { class: 'bp-key' }, h('span', null, 'Hold period'), h('b', null, r.hold_period_years != null ? `${r.hold_period_years} yrs` : '—'), h('small', null, holdCaption(r, manifest.source.sales_from))),
+        h('div', { class: 'bp-key' }, h('span', null, 'Hold period'), h('b', null, r.hold_period_years != null ? `${r.hold_period_years} yrs` : '—'), h('small', null, holdCaption(r))),
       ),
       h(
         'section',

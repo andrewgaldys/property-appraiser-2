@@ -72,7 +72,9 @@ export class Tooltip {
       COUNTY_META[p.co]?.short,
       p.sf ? `${int(p.sf)} SF` : null,
       p.u ? `${int(p.u)} units` : null,
-      p.hold != null ? `${p.hold} yr hold` : noSaleShort(this.manifest.source.sales_from),
+      p.hold != null
+        ? `${p.hold} yr hold`
+        : noSaleShort(p.hf != null ? this.manifest.source.as_of_year - p.hf : null),
     ].filter(Boolean);
     this.el.append(
       h('div', { class: 'tt-value' }, money(av ?? jv), h('span', { class: 'tt-unit' }, av != null ? 'assessed' : 'just value')),

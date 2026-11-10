@@ -53,9 +53,9 @@ web/                               Vite + TypeScript + MapLibre GL JS 6 + pmtile
 .github/workflows/deploy.yml       build web/ and publish to GitHub Pages
 ```
 
-**Data bundle (61 MB).** Polygon tiles (z12–15, 23 MB) and centroid tiles (z8–12, 10 MB) carry only what the map filters, colors and labels.
+**Data bundle (63 MB).** Polygon tiles (z12–15, 24 MB) and centroid tiles (z8–12, 10 MB) carry only what the map filters, colors and labels.
 Full parcel records sit in 256 small JSON shards keyed by hash(parcel ID), and owner portfolios in shards keyed by owner group.
-A click fetches one shard, whatever the dataset size. The overview (zoom 8) loads about 1.7 MB of tiles; every file is under 25 MB.
+A click fetches one shard, whatever the dataset size. The overview (zoom 8) loads under 2 MB of tiles; every file is under 25 MB.
 
 ## Real parcels: Florida Statewide Cadastral
 
@@ -86,7 +86,9 @@ Downloads are cached per window under `pipeline/raw/cadastral/<fingerprint>/`. A
 |---|---|
 | `--include-condo-units` / `--include-mobile-homes` | Add DOR 004 / 002 (see above) |
 | `--codes 003,008,…` | Any other code list |
-| `--sdf "pipeline/raw/*SDF*.zip"` | Older FDOR Sales Data Files to extend sale history (see *Sales history* below) |
+| `--no-county-sales` / `--refresh-sales` | Skip the county sale histories / re-query Palm Beach's latest transfers (see *Sales history* below) |
+| `--county-sales-dir DIR` | Where the Martin and St. Lucie exports live (default `pipeline/raw/county_sales/`) |
+| `--sdf "…/*SDF*.zip"` | FDOR Sales Data Files of earlier rolls, if you have them (the portal only posts the current roll) |
 | `--refresh` | Ignore the cache and download everything again |
 | `--allow-partial` | Publish even if some windows still fail after the retry pass |
 | `--workers 4` / `--simplify 0.000005` | Parallel requests (keep it polite, ≤ 6) / server-side simplification in degrees (0 = full detail) |
@@ -98,11 +100,28 @@ By class: Retail / Commercial 17,970 · Multifamily 2–9 12,793 · Industrial 7
 
 ### Sales history and hold periods
 
-The cadastral layer carries only the roll's two most recent sale slots (`SALE_YR1/2`). On the 2026 roll those cover 2025–26 sales, so just 7% of these parcels show a sale.
-The app is explicit about this: it shows "No sale since 2025" rather than "no sale on record". The hold filter counts unsold parcels as held ≥ 1 year, and the filter panel notes the limit.
+The cadastral layer carries only the roll's two most recent sale slots (`SALE_YR1/2`): on the 2026 roll, 2025–26 sales (7% of these parcels).
+The FDOR Data Portal posts only the current roll, so older SDF files are not available there either.
+The three property appraisers publish much longer histories for free, and the fetch merges them by default ([pipeline/pa2/county_sales.py](pipeline/pa2/county_sales.py)):
 
-For real hold periods, download older **SDF** (Sales Data File) zips from the FDOR Data Portal (below). Each roll's SDF covers roughly the year before it.
-Pass them with `--sdf`. The script takes each parcel's latest sale across all of them and records where the history starts, so captions become e.g. "No sale since 2014".
+| County | Source | What it has | Matched |
+|---|---|---|---|
+| Palm Beach | County GIS "Property Information Table" (ArcGIS Online, `PBCGOV_GIS`), queried by parcel number and cached in `pipeline/raw/county_sales/palm_beach/` | Each parcel's latest transfer: date, price, instrument | 32,184 of 33,851 |
+| Martin | Property Appraiser CAMA export `real_transfers.zip` ([Data Downloads](https://www.pamartinfl.gov/tools-resources/data-downloads) → Tax Roll / CAMA Database Exports → Real Transfers, ~95 MB) | Every recorded transfer, with FDOR qualification codes | 4,888 of 5,021 |
+| St. Lucie | Property Appraiser CAMA export `Transactions.zip` ([Data Requests](https://www.paslc.gov/231/Data-Requests) → Data Downloads → Transactions File, ~27 MB; the download server only serves browsers, so download it by hand) | Every recorded transfer | 7,609 of 7,861 |
+
+Put the two exports in `pipeline/raw/county_sales/martin/` and `pipeline/raw/county_sales/stlucie/` (not committed). A county whose export is missing keeps the roll window only.
+
+**Hold period** = 2026 − year of the last sale of at least $100 (`--min-sale-price`), from whichever source has the latest one.
+When that sale is not on record, the parcel still gets a minimum, `no_sale_since`: the earliest year from which some source rules out such a sale. Sources of those minimums:
+- the roll window (no sale listed: none since 2025);
+- Palm Beach's latest transfer being nominal (a $10 deed in 2018: no priced sale since 2018, since the earlier ones are not published there);
+- a full Martin / St. Lucie history with only nominal transfers.
+
+The drawer then says "No priced sale on record since 2018". The hold screen passes a parcel when either its known hold or its minimum reaches the threshold, and the hold color and height modes treat minimums as unknown.
+Dates of 1900/1901 are placeholders in converted CAMA records and are ignored.
+
+Run of 10 Nov 2026: last priced sale known for **36,261 parcels (78%)**, a minimum for the other 10,472. By county the sale is known for 95% (Martin), 96% (St. Lucie) and 71% (Palm Beach, where a third of latest transfers are nominal). The median hold is 8–9 years.
 
 ## Alternative: FDOR tax-roll files
 
@@ -114,7 +133,7 @@ Folder names follow the roll year (`2026F` = final 2026 roll, `2026P` = prelimin
 | Data | Portal path | Files for counties 53 / 60 / 66 |
 |---|---|---|
 | **NAL**: Name-Address-Legal (values, owner, use code, physicals, recent sales) | Tax Roll Data Files → NAL → `2026F` | `Martin 53 Final NAL 2026.zip`, `Palm Beach 60 Final NAL 2026.zip`, `Saint Lucie 66 Final NAL 2026.zip` |
-| **SDF**: Sales Data File | Tax Roll Data Files → SDF → `2026F` (and earlier years for history) | `Martin 53 Final SDF 2026.zip`, `Palm Beach 60 Final SDF 2026.zip`, `Saint Lucie 66 Final SDF 2026.zip` |
+| **SDF**: Sales Data File | Tax Roll Data Files → SDF → `2026F` (only the current roll is posted) | `Martin 53 Final SDF 2026.zip`, `Palm Beach 60 Final SDF 2026.zip`, `Saint Lucie 66 Final SDF 2026.zip` |
 | **Parcel polygons** (shapefiles) | Map Data → `2026F` → `2026F PAR` | `martin_2026Ppar.zip`, `palmbeach_2026Ppar.zip`, `stlucie_2026Ppar.zip` |
 | Field definitions | User Guides → `2026 Users guide and quick reference` | NAL/SDF layouts and codes |
 
@@ -151,7 +170,7 @@ Re-tile without re-reading the source: `pipeline/.venv/bin/python pipeline/build
 ### Bundle size and hosting
 
 Both builders overwrite only their own files in `web/public/data/`. Check the size with `du -sh web/public/data`.
-The cadastral bundle (61 MB, largest file 23 MB) can be committed. The full roll (~850k parcels) is several hundred MB, and GitHub rejects files over 100 MB, while Pages sites must stay under 1 GB. For that size, pick one of:
+The cadastral bundle (63 MB, largest file 24 MB) can be committed. The full roll (~850k parcels) is several hundred MB, and GitHub rejects files over 100 MB, while Pages sites must stay under 1 GB. For that size, pick one of:
 
 - **GitHub Release asset (works with the included workflow).** Release assets can be up to 2 GB.
   ```bash
@@ -210,7 +229,8 @@ Derived fields (pipeline/pa2/schema.py):
 | `building_value` | `JV − LND_VAL` (floored at 0) |
 | `land_to_value_ratio` | `LND_VAL / JV` |
 | `bldg_to_land_ratio` | `(JV − LND_VAL) / LND_VAL`: the map's "max building / land value" screen |
-| `hold_period_years` | `2026 − year of last sale` (`--as-of-year`) |
+| `hold_period_years` | `2026 − year of last sale of $100+` (`--as-of-year`, `--min-sale-price`) |
+| `no_sale_since` / `hold_floor_years` | When that sale is not on record: the year from which none is on record, and `2026 −` that year (a lower bound on the hold; tiles carry it as `hf`) |
 | `last_sale_qualified` | `true` for qualification code 01, `false` for 11+, otherwise null (raw code kept) |
 | `tot_lvg_area` | `TOT_LVG_AR`; values under 10 SF are treated as not reported. The 2026 roll carries `1` on ~7k improved office, warehouse and retail parcels. |
 
@@ -237,6 +257,7 @@ This creates `pa2_parcels` (indexed), the view `pa2_owner_portfolios` and the fu
 ## Notes and limits (V0.1)
 
 - Basemap: OpenFreeMap vector tiles (no key), restyled monochrome. Override with `VITE_BASEMAP_STYLE` (any MapLibre style URL).
-- Sale history: see *Sales history and hold periods*. Without older SDF files, hold periods exist only for the 7% of parcels that sold in 2025–26.
+- Sale history: see *Sales history and hold periods*. Palm Beach publishes only each parcel's latest transfer, so where that is a nominal deed the last priced sale is unknown (the parcel keeps a minimum hold instead).
+- Last-sale prices are as recorded: a deed covering several parcels may carry the whole package's price on each of them.
 - Condo units (004) and individual mobile homes (002) are excluded by default; see the opt-in flags.
 - Not yet included: address or owner search, comps, and fuzzy/Sunbiz entity matching.

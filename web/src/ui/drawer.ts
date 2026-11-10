@@ -217,12 +217,12 @@ export class Drawer {
           ),
           h(
             'div',
-            { class: `hold hold-${tier}`, title: holdCaption(r, this.manifest.source.sales_from) },
+            { class: `hold hold-${tier}`, title: holdCaption(r) },
             h('div', { class: 'hold-n mono' }, r.hold_period_years ?? '—'),
             h('div', { class: 'hold-u' }, 'yr hold'),
           ),
         ),
-        h('p', { class: 'cap' }, holdCaption(r, this.manifest.source.sales_from), r.hold_period_years != null ? ` · hold = ${this.manifest.source.as_of_year} − ${r.last_sale_year}` : ''),
+        h('p', { class: 'cap' }, holdCaption(r), r.hold_period_years != null ? ` · hold = ${this.manifest.source.as_of_year} − ${r.last_sale_year}` : ''),
         factGrid(saleFacts(r)),
       ),
     );

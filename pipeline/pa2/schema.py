@@ -10,7 +10,7 @@ from __future__ import annotations
 from .config import AS_OF_YEAR, COUNTIES
 from .dor_codes import ASSET_CLASSES, classify, describe, normalize_use_code
 from .entity import format_mailing_address
-from .util import clean_str, round_or_none, us_state_code, zip5
+from .util import clean_str, round_or_none, to_int, us_state_code, zip5
 
 # Placeholder site addresses the property appraisers use for parcels without one.
 _NO_ADDRESS = {"UNASSIGNED", "NO SITE ADDRESS", "NONE", "0", "N/A"}
@@ -54,6 +54,8 @@ FIELDS: list[tuple[str, str, str]] = [
     ("last_sale_qual_cd", "text", "FDOR sale qualification code of that sale"),
     ("last_sale_qualified", "boolean", "True for code 01, False for codes 11+, else null"),
     ("hold_period_years", "smallint", "AS_OF_YEAR - last_sale_year"),
+    ("no_sale_since", "smallint", "When no sale >= the minimum price is on record: the year from which none is"),
+    ("hold_floor_years", "smallint", "AS_OF_YEAR - no_sale_since: a lower bound on the hold period"),
     ("owner_name_key", "integer", "Portfolio key: normalized owner name (groups of 2+)"),
     ("owner_addr_key", "integer", "Portfolio key: normalized mailing address (groups of 2+)"),
     ("legal_desc", "text", "S_LEGAL"),
@@ -112,6 +114,9 @@ def finalize_record(r: dict, as_of_year: int = AS_OF_YEAR) -> dict:
 
     sy = r.get("last_sale_year")
     r["hold_period_years"] = max(as_of_year - sy, 0) if sy else None
+    nss = to_int(r.get("no_sale_since"))
+    r["no_sale_since"] = nss if nss and not sy else None
+    r["hold_floor_years"] = max(as_of_year - nss, 0) if r["no_sale_since"] else None
     r["last_sale_qual_cd"] = clean_str(r.get("last_sale_qual_cd")) or None
     r["last_sale_qualified"] = qualified_from_code(r["last_sale_qual_cd"])
 

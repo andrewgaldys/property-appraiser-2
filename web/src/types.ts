@@ -36,8 +36,6 @@ export interface Manifest {
     attribution: string;
     tax_roll_year: number | null;
     as_of_year: number;
-    /** First year of the source's sale window when it only carries recent sales (statewide cadastral). */
-    sales_from?: number | null;
   };
   bounds: Bbox;
   counties: ManifestCounty[];
@@ -91,6 +89,8 @@ export interface TileProps {
   sp?: number;
   sy?: number;
   hold?: number;
+  /** Lower bound on the hold when the last priced sale is not on record (as_of_year - no_sale_since). */
+  hf?: number;
   onk?: number;
   oak?: number;
 }
@@ -131,6 +131,8 @@ export interface ParcelRecord {
   last_sale_qual_cd: string | null;
   last_sale_qualified: boolean | null;
   hold_period_years: number | null;
+  /** When no priced sale is on record: the year from which none is (see holdCaption). */
+  no_sale_since?: number | null;
   owner_name_key: number | null;
   owner_addr_key: number | null;
   legal_desc: string;

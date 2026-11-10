@@ -228,14 +228,12 @@ export class FilterPanel {
         rangeRow(
           'Min hold period',
           hold,
-          m.source.sales_from
-            ? h(
-                'p',
-                { class: 'cap' },
-                `Sales in this source start in ${m.source.sales_from}. Parcels with no sale since then count as held ≥ `,
-                `${Math.max(m.source.as_of_year - m.source.sales_from, 0)} yr; longer screens need the FDOR sales history (README).`,
-              )
-            : undefined,
+          h(
+            'p',
+            { class: 'cap' },
+            'Years since the last sale of $100 or more. A parcel whose last such sale is not on record passes ',
+            'when none is on record for at least that long (e.g. only a later $10 transfer).',
+          ),
         ),
         rangeRow('Min lot size', lot),
         rangeRow('Max building / land value', btl, btl.cap),
