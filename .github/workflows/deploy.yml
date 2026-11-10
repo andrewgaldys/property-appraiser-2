@@ -1,0 +1,78 @@
+# Builds web/ and publishes it to GitHub Pages.
+#
+# One-time setup: Settings -> Pages -> Source: "GitHub Actions".
+#
+# Optional repository variables (Settings -> Secrets and variables -> Actions -> Variables):
+#   DATA_RELEASE_TAG    tag of a GitHub Release holding pa2-data.tar.gz (the production data
+#                       bundle, see README). Unpacked over web/public/data before the build.
+#   VITE_DATA_URL       serve the data bundle from elsewhere (e.g. an R2/S3 bucket) instead.
+#   VITE_BASEMAP_STYLE  replace the built-in OpenFreeMap monochrome basemap with a style URL.
+
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Use production data bundle from a GitHub Release
+        if: ${{ vars.DATA_RELEASE_TAG != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ vars.DATA_RELEASE_TAG }}
+        run: |
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern 'pa2-data.tar.gz' --dir "$RUNNER_TEMP"
+          rm -rf public/data
+          mkdir -p public/data
+          tar -xzf "$RUNNER_TEMP/pa2-data.tar.gz" -C public/data
+          test -f public/data/manifest.json
+          du -sh public/data
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check and build
+        run: npm run build
+        env:
+          VITE_DATA_URL: ${{ vars.VITE_DATA_URL }}
+          VITE_BASEMAP_STYLE: ${{ vars.VITE_BASEMAP_STYLE }}
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

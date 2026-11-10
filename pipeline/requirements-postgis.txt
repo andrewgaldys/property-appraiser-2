@@ -1,0 +1,5 @@
+# Optional: sync the joined parcel table to PostGIS / Supabase (sync_postgis.py)
+-r requirements.txt
+sqlalchemy>=2.0
+geoalchemy2>=0.15
+psycopg2-binary>=2.9

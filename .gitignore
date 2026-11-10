@@ -1,0 +1,23 @@
+# Node / Vite
+node_modules/
+web/dist/
+*.local
+
+# Python
+__pycache__/
+*.pyc
+pipeline/.venv/
+
+# Raw FDOR downloads and intermediate pipeline outputs (multi-GB, never commit)
+pipeline/raw/
+pipeline/out/
+pipeline/raw_sample/
+
+# Production data bundles (publish as a GitHub Release asset instead, see README)
+*.tar.gz
+
+# OS / editor / local tooling
+.DS_Store
+.idea/
+.vscode/
+.claude/

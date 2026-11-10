@@ -1,0 +1,9 @@
+# Sample data + pure-Python PMTiles writer (enough for generate_sample_data.py)
+shapely>=2.0
+pmtiles>=3.4
+
+# Production FDOR pipeline (build_fdor.py)
+pandas>=2.1
+geopandas>=1.0
+pyogrio>=0.9
+pyarrow>=15
