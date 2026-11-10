@@ -42,6 +42,7 @@ import {
   rimHeights,
   rimOpacity,
 } from './layers';
+import { registerArchive } from './pmtilesSource';
 import { SatelliteOverlay, type OverlayMode } from './satellite';
 
 // MapLibre v6 ships its web worker as a separate ES module; hand Vite's URL for it to MapLibre.
@@ -117,6 +118,7 @@ export class MapController {
     const t = this.manifest.tiles;
     if (t.format === 'pmtiles') {
       this.vector = true;
+      for (const archive of [t.polygons.url, t.points.url]) registerArchive(pmtiles, this.data.url(archive));
       this.map.addSource(SRC_POLY, { type: 'vector', url: `pmtiles://${this.data.url(t.polygons.url)}` });
       this.map.addSource(SRC_PTS, { type: 'vector', url: `pmtiles://${this.data.url(t.points.url)}` });
     } else {

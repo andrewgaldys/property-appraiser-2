@@ -219,6 +219,9 @@ Esri's terms of use apply to this service. Check them before a public or commerc
 Asset paths are relative (`base: './'`), so the site works under `/<repo>/` or a custom domain.
 For a local check of the production build, use `npm run preview`; Python's `http.server` does not support Range requests, which PMTiles needs.
 
+Right after a data deploy, a Range request can come back as the whole file (HTTP 200). Chrome does this when it revalidates ranges it cached from the previous file, and so can a CDN edge that hasn't cached the new one yet.
+Plain pmtiles would give up and leave the map empty until a reload. [web/src/map/pmtilesSource.ts](web/src/map/pmtilesSource.ts) retries those requests past the browser cache instead.
+
 ## Data model
 
 Derived fields (pipeline/pa2/schema.py):
