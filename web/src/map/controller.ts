@@ -13,28 +13,36 @@ import {
 import 'maplibre-gl/dist/maplibre-gl.css';
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import { Protocol } from 'pmtiles';
+import { LENS_RADIUS, SATELLITE_ATTRIBUTION } from '../config';
 import type { DataStore } from '../data';
 import type { Store } from '../state';
 import type { AppState, Bbox, Manifest, ParcelRecord, PortfolioItem, TileProps, ViewStats } from '../types';
 import type { Tooltip } from '../ui/tooltip';
-import { BASEMAP_LABEL_ANCHOR, buildBasemapStyle } from './basemap';
+import { BASEMAP_LABEL_ANCHOR, applyBasemap, buildBasemapStyle } from './basemap';
 import {
   L_3D,
   L_FLAT,
   L_OUTLINE,
   L_POINTS,
+  L_RIM,
   PARCEL_LAYERS,
   SRC_POLY,
   SRC_PTS,
   colorExpr,
-  filterExpr,
+  extrusionOpacity,
+  fillOpacity,
   heightExpr,
+  layerFilter,
   outlineColor,
   outlineWidth,
   parcelLayers,
   pointRadius,
   pointStrokeWidth,
+  rimColor,
+  rimHeights,
+  rimOpacity,
 } from './layers';
+import { SatelliteOverlay, type OverlayMode } from './satellite';
 
 // MapLibre v6 ships its web worker as a separate ES module; hand Vite's URL for it to MapLibre.
 setWorkerUrl(workerUrl);
@@ -58,9 +66,10 @@ export class MapController {
   private statsTimer = 0;
   private ready = false;
   private rightInset = 0;
+  private overlay: SatelliteOverlay | null = null;
 
   constructor(
-    container: HTMLElement,
+    private container: HTMLElement,
     private manifest: Manifest,
     private data: DataStore,
     private store: Store<AppState>,
@@ -76,14 +85,17 @@ export class MapController {
       pitch: 38,
       bearing: -14,
       maxPitch: 78,
+      // Centroid tiles start at z8; further out there would be nothing to show.
+      minZoom: manifest.tiles.points.minzoom,
       hash: 'map',
       attributionControl: false,
       canvasContextAttributes: { antialias: true },
     });
     this.map.addControl(new NavigationControl({ visualizePitch: true }), 'top-right');
     this.map.addControl(new ScaleControl({ unit: 'imperial', maxWidth: 100 }), 'bottom-right');
+    // Imagery appears in the lens, split view and drawer card too, so it is always credited.
     this.map.addControl(
-      new AttributionControl({ compact: true, customAttribution: manifest.source.attribution }),
+      new AttributionControl({ compact: true, customAttribution: [manifest.source.attribution, SATELLITE_ATTRIBUTION] }),
       'bottom-right',
     );
     // 'style.load' fires as soon as the style JSON is parsed; 'load' would wait for every
@@ -115,10 +127,28 @@ export class MapController {
     }
     const before = this.labelAnchor();
     for (const layer of parcelLayers(this.manifest, this.store.get(), this.vector)) this.map.addLayer(layer, before);
+    this.overlay = new SatelliteOverlay(this.map, this.container, this.manifest, this.data);
+    this.overlay.onLensChange = (visible) => this.tooltip.setOffset(visible ? Math.round(LENS_RADIUS * 0.72) + 6 : 14);
+    this.applyBasemapMode(this.store.get());
     this.bindEvents();
     this.store.subscribe((s, prev) => this.apply(s, prev));
     this.ready = true;
     this.events.onReady();
+  }
+
+  private overlayMode(s: AppState): OverlayMode {
+    if (s.basemap === 'split') return 'split';
+    return s.basemap === 'dark' && s.lens ? 'lens' : 'off';
+  }
+
+  private applyBasemapMode(s: AppState): void {
+    applyBasemap(this.map, s.basemap);
+    const polyMin = this.manifest.tiles.polygons.minzoom;
+    this.map.setPaintProperty(L_FLAT, 'fill-opacity', fillOpacity(s, polyMin));
+    this.map.setPaintProperty(L_3D, 'fill-extrusion-opacity', extrusionOpacity(s, polyMin));
+    const rimMin = this.manifest.tiles.polygons.rim_minzoom;
+    if (rimMin != null) this.map.setPaintProperty(L_RIM, 'fill-extrusion-opacity', rimOpacity(s, rimMin));
+    this.overlay?.setMode(this.overlayMode(s));
   }
 
   get isReady(): boolean {
@@ -131,19 +161,25 @@ export class MapController {
 
   private apply(s: AppState, prev: AppState): void {
     if (s.filters !== prev.filters) {
-      const f = filterExpr(s.filters);
-      for (const id of PARCEL_LAYERS) this.map.setFilter(id, f);
+      for (const id of PARCEL_LAYERS) this.map.setFilter(id, layerFilter(id, s.filters, this.manifest));
     }
     if (s.extrude !== prev.extrude) {
       const flat = s.extrude === 'flat';
       this.map.setLayoutProperty(L_FLAT, 'visibility', flat ? 'visible' : 'none');
       this.map.setLayoutProperty(L_3D, 'visibility', flat ? 'none' : 'visible');
       this.map.setPaintProperty(L_3D, 'fill-extrusion-height', heightExpr(s.extrude));
+      const hasRims = this.manifest.tiles.polygons.rim_minzoom != null;
+      this.map.setLayoutProperty(L_RIM, 'visibility', flat || !hasRims ? 'none' : 'visible');
+      const rim = rimHeights(s.extrude);
+      this.map.setPaintProperty(L_RIM, 'fill-extrusion-base', rim.base);
+      this.map.setPaintProperty(L_RIM, 'fill-extrusion-height', rim.top);
       const pitch = this.map.getPitch();
       if (flat && pitch > 0) this.map.easeTo({ pitch: 0, duration: 700 });
       if (!flat && pitch < 25) this.map.easeTo({ pitch: 55, duration: 900 });
     }
     if (s.shade !== prev.shade || s.selection !== prev.selection || s.focus !== prev.focus) this.applyColors(s);
+    if (s.basemap !== prev.basemap || s.lens !== prev.lens || s.shade !== prev.shade) this.applyBasemapMode(s);
+    if (s.selection?.pid !== prev.selection?.pid) this.overlay?.setSelected(s.selection?.pid ?? null);
     this.scheduleStats();
   }
 
@@ -156,6 +192,7 @@ export class MapController {
     this.map.setPaintProperty(L_POINTS, 'circle-stroke-width', pointStrokeWidth(s));
     this.map.setPaintProperty(L_OUTLINE, 'line-color', outlineColor(s));
     this.map.setPaintProperty(L_OUTLINE, 'line-width', outlineWidth(s));
+    this.map.setPaintProperty(L_RIM, 'fill-extrusion-color', rimColor(s));
   }
 
   // ---------------------------------------------------------------------------

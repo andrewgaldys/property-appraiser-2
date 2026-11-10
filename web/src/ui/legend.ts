@@ -1,18 +1,18 @@
-import { COLOR_PORTFOLIO, COLOR_SELECTED, EXTRUDE_MODES, RAMP_NORMAL, SHADE_MODES } from '../config';
+import { CLASS_COLORS, CLASS_FALLBACK, CLASS_SHORT, EXTRUDE_MODES, RAMP_NORMAL, SHADE_MODES } from '../config';
 import { appendAll, clear, h } from '../dom';
-import { compact, money, pct } from '../format';
-import { shadeStops } from '../map/layers';
+import { compact, int, money, pct } from '../format';
+import { shadeStops, type MetricMode } from '../map/layers';
 import type { Store } from '../state';
-import type { AppState, Manifest, ShadeMode } from '../types';
+import type { AppState, Manifest } from '../types';
 
-function tick(mode: ShadeMode, v: number): string {
+function tick(mode: MetricMode, v: number): string {
   if (mode === 'value') return money(v);
   if (mode === 'sqft') return `${compact(v)} SF`;
   if (mode === 'hold') return `${Math.max(0, Math.round(v))} yr`;
   return pct(v);
 }
 
-/** Scale legend for the single-hue ramp + what height encodes. */
+/** Compact bottom-left legend: asset-class swatches (or the metric ramp) + what height encodes. */
 export class Legend {
   private el: HTMLElement;
 
@@ -29,35 +29,71 @@ export class Legend {
     });
   }
 
+  private classRows(compactRows: boolean): HTMLElement {
+    const classes = this.manifest.asset_classes.filter((c) => c.count > 0 || c.primary);
+    return h(
+      'ul',
+      { class: `lg-classes${compactRows ? ' compact' : ''}` },
+      classes.map((c) =>
+        h(
+          'li',
+          null,
+          h('i', { class: 'lg-sw', style: { background: CLASS_COLORS[c.code] ?? CLASS_FALLBACK } }),
+          h('span', { class: 'lg-name' }, c.label),
+          compactRows ? null : h('span', { class: 'lg-n' }, int(c.count)),
+        ),
+      ),
+    );
+  }
+
   private render(s: AppState): void {
     clear(this.el);
-    const shade = SHADE_MODES.find((x) => x.id === s.shade)!;
     const ext = EXTRUDE_MODES.find((x) => x.id === s.extrude)!;
-    const stops = shadeStops(this.manifest, s.shade);
+    const height = h(
+      'div',
+      { class: 'lg-row lg-height' },
+      h('span', { class: 'lg-k' }, 'Height'),
+      h('span', { class: 'lg-v' }, s.extrude === 'flat' ? 'Flat (2D)' : `${ext.legend}, log-scaled`),
+    );
+    const keys = s.selection
+      ? h(
+          'div',
+          { class: 'lg-keys' },
+          h('span', { class: 'lg-key' }, h('i', { style: { background: '#ffffff' } }), 'Selected'),
+          h('span', { class: 'lg-key' }, h('i', { class: 'ring' }), 'Same owner'),
+        )
+      : null;
+
+    if (s.shade === 'class') {
+      appendAll(this.el, h('div', { class: 'lg-title' }, 'Asset class'), this.classRows(false), height, keys);
+      return;
+    }
+    const mode = s.shade as MetricMode;
+    const shade = SHADE_MODES.find((x) => x.id === mode)!;
+    const stops = shadeStops(this.manifest, mode);
     const grad = `linear-gradient(90deg, ${RAMP_NORMAL.map((c, i) => `${c} ${i * 25}%`).join(', ')})`;
-    const swatch = (color: string, label: string) =>
-      h('span', { class: 'lg-key' }, h('i', { style: { background: color } }), label);
     appendAll(
       this.el,
-      h('div', { class: 'lg-row' }, h('span', { class: 'lg-k' }, 'Shade'), h('span', { class: 'lg-v' }, shade.legend)),
+      h('div', { class: 'lg-row' }, h('span', { class: 'lg-k' }, 'Fill'), h('span', { class: 'lg-v' }, shade.legend)),
       h('div', { class: 'lg-ramp', style: { background: grad } }),
       h(
         'div',
         { class: 'lg-ticks' },
-        h('span', null, tick(s.shade, stops[0]!)),
-        h('span', null, tick(s.shade, stops[2]!)),
-        h('span', null, tick(s.shade, stops[4]!)),
+        h('span', null, tick(mode, stops[0]!)),
+        h('span', null, tick(mode, stops[2]!)),
+        h('span', null, tick(mode, stops[4]!)),
       ),
       h('div', { class: 'lg-ticks lg-q' }, h('span', null, 'p5'), h('span', null, 'median'), h('span', null, 'p95')),
+      h('div', { class: 'lg-row' }, h('span', { class: 'lg-k' }, 'Outline'), h('span', { class: 'lg-v' }, 'Asset class')),
       h(
         'div',
-        { class: 'lg-row' },
-        h('span', { class: 'lg-k' }, 'Height'),
-        h('span', { class: 'lg-v' }, s.extrude === 'flat' ? 'Flat (2D)' : `${ext.legend}, log-scaled`),
+        { class: 'lg-outline-keys' },
+        this.manifest.asset_classes
+          .filter((c) => c.primary)
+          .map((c) => h('span', { title: c.label }, h('i', { style: { borderColor: CLASS_COLORS[c.code] ?? CLASS_FALLBACK } }), CLASS_SHORT[c.code] ?? c.code)),
       ),
-      s.selection
-        ? h('div', { class: 'lg-keys' }, swatch(COLOR_SELECTED, 'Selected'), swatch(COLOR_PORTFOLIO, 'Same owner'))
-        : null,
+      height,
+      keys,
     );
   }
 }

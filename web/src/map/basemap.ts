@@ -1,4 +1,44 @@
 import type { ExpressionSpecification, StyleSpecification } from '@maplibre/maplibre-gl-style-spec';
+import type { Map as MapLibreMap } from 'maplibre-gl';
+import { SATELLITE_ATTRIBUTION, SATELLITE_TILES } from '../config';
+import type { BasemapMode } from '../types';
+
+export const SATELLITE_LAYER = 'satellite';
+/** Dark-style layers that would hide or clutter the imagery in hybrid mode. */
+const HYBRID_HIDDEN = ['landcover', 'park', 'water', 'waterway', 'aeroway', 'road-minor', 'road-secondary',
+  'road-primary', 'road-motorway', 'rail', 'building-3d'];
+type PaintSet = Record<string, Record<string, string | number>>;
+const LABEL_PAINT: Record<'dark' | 'hybrid', PaintSet> = {
+  dark: {
+    'road-label': { 'text-color': '#6c6c6c', 'text-halo-color': '#0a0a0a', 'text-halo-width': 1.4 },
+    'place-label': { 'text-color': '#a4a4a4', 'text-halo-color': '#0a0a0a', 'text-halo-width': 1.6 },
+    'water-label-line': { 'text-color': '#3e3e3e', 'text-halo-color': '#030303' },
+    'water-label-point': { 'text-color': '#3e3e3e', 'text-halo-color': '#030303' },
+    'boundary-county': { 'line-color': '#5c5c5c' },
+  },
+  hybrid: {
+    'road-label': { 'text-color': '#f4f4f4', 'text-halo-color': 'rgba(0,0,0,0.92)', 'text-halo-width': 1.7 },
+    'place-label': { 'text-color': '#ffffff', 'text-halo-color': 'rgba(0,0,0,0.92)', 'text-halo-width': 2 },
+    'water-label-line': { 'text-color': '#d6ebff', 'text-halo-color': 'rgba(0,0,0,0.85)' },
+    'water-label-point': { 'text-color': '#d6ebff', 'text-halo-color': 'rgba(0,0,0,0.85)' },
+    'boundary-county': { 'line-color': '#ffffff' },
+  },
+};
+
+/** Switch the main map between the monochrome style and satellite hybrid (split uses an overlay map). */
+export function applyBasemap(map: MapLibreMap, mode: BasemapMode): void {
+  const hybrid = mode === 'hybrid';
+  if (map.getLayer(SATELLITE_LAYER)) map.setLayoutProperty(SATELLITE_LAYER, 'visibility', hybrid ? 'visible' : 'none');
+  for (const id of HYBRID_HIDDEN) {
+    if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', hybrid ? 'none' : 'visible');
+  }
+  for (const [id, paint] of Object.entries(LABEL_PAINT[hybrid ? 'hybrid' : 'dark'])) {
+    if (!map.getLayer(id)) continue;
+    for (const [prop, value] of Object.entries(paint)) {
+      map.setPaintProperty(id, prop as Parameters<MapLibreMap['setPaintProperty']>[1], value);
+    }
+  }
+}
 
 /**
  * "Institutional mono" basemap: OpenFreeMap vector tiles (OpenMapTiles schema, no API key)
@@ -20,6 +60,13 @@ export function buildBasemapStyle(): StyleSpecification {
     glyphs: 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',
     sources: {
       [SRC]: { type: 'vector', url: 'https://tiles.openfreemap.org/planet' },
+      [SATELLITE_LAYER]: {
+        type: 'raster',
+        tiles: [SATELLITE_TILES],
+        tileSize: 256,
+        maxzoom: 19,
+        attribution: SATELLITE_ATTRIBUTION,
+      },
     },
     light: { anchor: 'viewport', color: '#ffffff', intensity: 0.42, position: [1.25, 205, 35] },
     sky: {
@@ -33,6 +80,12 @@ export function buildBasemapStyle(): StyleSpecification {
     },
     layers: [
       { id: 'background', type: 'background', paint: { 'background-color': '#0b0b0b' } },
+      {
+        id: SATELLITE_LAYER, type: 'raster', source: SATELLITE_LAYER,
+        layout: { visibility: 'none' },
+        // Slightly muted so labels and parcel outlines stay the brightest things on screen.
+        paint: { 'raster-brightness-max': 0.88, 'raster-saturation': -0.12, 'raster-fade-duration': 120 },
+      },
       {
         id: 'landcover', type: 'fill', source: SRC, 'source-layer': 'landcover',
         filter: ['in', ['get', 'class'], ['literal', ['wood', 'grass', 'wetland', 'farmland', 'sand']]],

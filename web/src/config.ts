@@ -1,4 +1,4 @@
-import type { ExtrudeMode, Filters, ShadeMode } from './types';
+import type { BasemapMode, ExtrudeMode, Filters, ShadeMode } from './types';
 
 export const APP_NAME = 'Property Appraiser 2.0';
 export const APP_VERSION = 'V0.1';
@@ -16,7 +16,7 @@ export const CLASS_SHORT: Record<string, string> = {
   MF2_9: 'MF 2–9',
   COM: 'Retail / Com',
   IND: 'Industrial',
-  VAC_COM: 'Vacant Com',
+  VAC_COM: 'Vacant Com/Ind',
   SFR: 'Single Family',
   CONDO: 'Condo',
   RES_OTH: 'Other Res',
@@ -32,7 +32,7 @@ export const CLASS_BADGE: Record<string, string> = {
   MF2_9: 'Multifamily 2–9',
   COM: 'Retail / Commercial',
   IND: 'Industrial',
-  VAC_COM: 'Vacant Commercial',
+  VAC_COM: 'Vacant Com / Industrial',
   SFR: 'Single Family',
   CONDO: 'Condo / Co-op',
   RES_OTH: 'Other Residential',
@@ -59,11 +59,46 @@ export const EXTRUDE_MODES: { id: ExtrudeMode; label: string; legend: string }[]
 ];
 
 export const SHADE_MODES: { id: ShadeMode; label: string; legend: string }[] = [
+  { id: 'class', label: 'Class', legend: 'Asset class' },
   { id: 'value', label: 'Value', legend: 'Just value' },
   { id: 'sqft', label: 'Bldg SF', legend: 'Building sq ft' },
   { id: 'hold', label: 'Hold', legend: 'Years since last sale' },
   { id: 'ltv', label: 'Land %', legend: 'Land share of value' },
 ];
+
+/**
+ * Asset-class colors (fills, extrusions, outlines). The five investment classes use the
+ * specified high-contrast palette; supporting classes get quiet neutrals so they recede.
+ */
+export const CLASS_COLORS: Record<string, string> = {
+  MF10: '#3B82F6',
+  MF2_9: '#06B6D4',
+  COM: '#F59E0B',
+  IND: '#A855F7',
+  VAC_COM: '#10B981',
+  INST: '#94A3B8',
+  CONDO: '#CBD5E1',
+  RES_OTH: '#78716C',
+  SFR: '#A8A29E',
+  VAC_RES: '#57534E',
+  AG: '#65A30D',
+  GOV: '#64748B',
+  OTHER: '#64748B',
+};
+export const CLASS_FALLBACK = '#64748B';
+
+export const BASEMAP_MODES: { id: BasemapMode; label: string; title: string }[] = [
+  { id: 'dark', label: 'Dark', title: 'Monochrome dark basemap' },
+  { id: 'hybrid', label: 'Hybrid', title: 'Satellite imagery with street labels and parcel outlines' },
+  { id: 'split', label: 'Split', title: 'Dark map on the left, satellite on the right (drag the divider)' },
+];
+
+/** Esri World Imagery: keyless raster tiles. Attribution must stay visible. */
+export const SATELLITE_TILES = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+export const SATELLITE_ATTRIBUTION = 'Imagery © Esri, Maxar, Earthstar Geographics, GIS User Community';
+/** The spyglass lens shows from this zoom (imagery is meaningless further out). */
+export const LENS_MIN_ZOOM = 14;
+export const LENS_RADIUS = 120;
 
 /**
  * Single-hue (neutral) sequential ramps, lightness-monotonic, placed at the dataset's
@@ -88,4 +123,4 @@ export const HEIGHT_STOPS: Record<Exclude<ExtrudeMode, 'flat'>, number[]> = {
   hold: [-1, 1, 0, 2, 5, 12, 10, 25, 20, 52, 30, 80, 45, 120],
 };
 
-export const STORAGE_KEY = 'pa2.view.v1';
+export const STORAGE_KEY = 'pa2.view.v2';

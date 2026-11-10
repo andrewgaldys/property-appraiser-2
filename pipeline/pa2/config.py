@@ -41,7 +41,9 @@ TILE_FIELDS: dict[str, str] = {
     "asset_class": "cls",
     "use_code": "uc",
     "site_address": "addr",
+    "owner_name": "own",
     "just_value": "jv",
+    "assessed_value": "av",
     "land_value": "lv",
     "building_value": "bv",
     "land_to_value_ratio": "ltv",
@@ -57,6 +59,14 @@ TILE_FIELDS: dict[str, str] = {
     "owner_addr_key": "oak",
 }
 
+# The centroid-dot layer covers whole counties per tile at low zoom, so it carries only what the
+# map needs to filter, color, highlight and label; the tooltip fetches the rest on demand.
+POINT_FIELDS: list[str] = [
+    "parcel_id", "county_code", "asset_class", "use_code", "just_value", "tot_lvg_area", "lnd_sqfoot",
+    "no_res_unts", "hold_period_years", "land_to_value_ratio", "bldg_to_land_ratio",
+    "owner_name_key", "owner_addr_key",
+]
+
 # Columns stored per parcel in parcels/<shard>.json (row arrays, in this order).
 DETAIL_FIELDS: list[str] = [
     "parcel_id",
@@ -69,6 +79,7 @@ DETAIL_FIELDS: list[str] = [
     "use_category",
     "asset_class",
     "just_value",
+    "assessed_value",
     "land_value",
     "building_value",
     "land_to_value_ratio",
@@ -127,7 +138,12 @@ AGENT_ADDRESS_NAME_THRESHOLD = 25
 
 # Zoom ranges. Polygons start at z12; below that the map draws the centroid layer.
 POLYGON_ZOOMS = (12, 15)
-POINT_ZOOMS = (5, 12)
+POINT_ZOOMS = (8, 12)
+# Parcel "rims": a narrow band just inside each boundary, shipped only in the max-zoom polygon tiles
+# (flagged `e: 1`). The frontend extrudes it a hair above the 3D block so every roof gets an
+# outline: MapLibre cannot raise line layers to roof height. ~1.9 px at z16.
+RIM_WIDTH_M = 2.0
+RIM_ZOOM = POLYGON_ZOOMS[1]
 
 ATTRIBUTION_FDOR = "Florida Department of Revenue, Property Tax Oversight (NAL/SDF)"
 ATTRIBUTION_SAMPLE = "Synthetic sample data (not real parcels)"

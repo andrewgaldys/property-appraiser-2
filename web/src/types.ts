@@ -5,6 +5,8 @@ export interface TileSet {
   layer: string;
   minzoom: number;
   maxzoom: number;
+  /** Polygons only: zoom from which tiles carry roof-rim features (`e: 1`). */
+  rim_minzoom?: number;
 }
 
 export interface ManifestCounty {
@@ -34,11 +36,15 @@ export interface Manifest {
     attribution: string;
     tax_roll_year: number | null;
     as_of_year: number;
+    /** First year of the source's sale window when it only carries recent sales (statewide cadastral). */
+    sales_from?: number | null;
   };
   bounds: Bbox;
   counties: ManifestCounty[];
   cities: { name: string; county: number; count: number; bbox: Bbox }[];
   asset_classes: ManifestAssetClass[];
+  /** DOR use code -> description for codes present in the data (absent in older bundles). */
+  use_codes?: Record<string, string>;
   stats: {
     parcels: number;
     just_value: number;
@@ -67,7 +73,13 @@ export interface TileProps {
   cls: string;
   uc?: string;
   addr?: string;
+  /** Owner name (polygon tiles only; dots fetch it on hover). */
+  own?: string;
+  /** House number for z15+ labels (dot tiles). */
+  hn?: string;
   jv?: number;
+  /** Assessed value, non-school (AV_NSD). */
+  av?: number;
   lv?: number;
   bv?: number;
   ltv?: number;
@@ -94,6 +106,7 @@ export interface ParcelRecord {
   use_category: string;
   asset_class: string;
   just_value: number | null;
+  assessed_value?: number | null;
   land_value: number | null;
   building_value: number | null;
   land_to_value_ratio: number | null;
@@ -172,7 +185,9 @@ export interface Portfolio {
 }
 
 export type ExtrudeMode = 'flat' | 'value' | 'sqft' | 'hold';
-export type ShadeMode = 'value' | 'sqft' | 'hold' | 'ltv';
+/** "Color by": asset class (default) or a metric ramp. */
+export type ShadeMode = 'class' | 'value' | 'sqft' | 'hold' | 'ltv';
+export type BasemapMode = 'dark' | 'hybrid' | 'split';
 
 export interface Filters {
   counties: number[]; // empty = all
@@ -192,6 +207,9 @@ export interface AppState {
   filters: Filters;
   extrude: ExtrudeMode;
   shade: ShadeMode;
+  basemap: BasemapMode;
+  /** Satellite spyglass lens around the cursor (dark basemap, zoom >= 14). */
+  lens: boolean;
   selection: Selection | null;
   focus: boolean;
 }

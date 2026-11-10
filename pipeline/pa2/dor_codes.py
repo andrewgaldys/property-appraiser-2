@@ -119,7 +119,7 @@ ASSET_CLASSES: dict[str, tuple[str, str]] = {
     "MF2_9": ("Multifamily 2-9 Units", "Multifamily"),
     "COM": ("Retail / Commercial", "Commercial/Retail"),
     "IND": ("Industrial", "Industrial"),
-    "VAC_COM": ("Vacant Commercial", "Vacant Land"),
+    "VAC_COM": ("Vacant Commercial / Industrial", "Vacant Land"),
     "SFR": ("Single Family", "Single Family"),
     "CONDO": ("Condo / Co-op", "Residential"),
     "RES_OTH": ("Other Residential", "Residential"),

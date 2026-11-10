@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from pa2.config import ATTRIBUTION_FDOR, OUT_DIR, POINT_ZOOMS, POLYGON_ZOOMS, WEB_DATA_DIR  # noqa: E402
 from pa2.io import read_parquet  # noqa: E402
-from pa2.publish import tile_properties  # noqa: E402
+from pa2.publish import point_properties, tile_properties  # noqa: E402
 from pa2.tiler import (  # noqa: E402
     build_pmtiles_python,
     python_tiler_available,
@@ -45,7 +45,7 @@ def main() -> int:
     records = read_parquet(args.parquet)
     print(f"{len(records):,} parcels from {args.parquet}")
     poly = [(r["fid"], tile_properties(r), r["geometry"]) for r in records]
-    pts = [(r["fid"], tile_properties(r), shapely.Point(r["lon"], r["lat"])) for r in records]
+    pts = [(r["fid"], point_properties(r), shapely.Point(r["lon"], r["lat"])) for r in records]
     manifest_path = args.out / "manifest.json"
     manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
     attribution = manifest.get("source", {}).get("attribution", ATTRIBUTION_FDOR)

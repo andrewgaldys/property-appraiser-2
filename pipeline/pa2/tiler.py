@@ -22,8 +22,9 @@ from .mvt import GEOM_POINT, GEOM_POLYGON, encode_points, encode_polygons, encod
 EXTENT = 4096
 BUFFER = 64  # tile units of overlap for clipped polygons (tippecanoe default ~80)
 
-# (fid, tile properties, shapely geometry in EPSG:4326)
-TileFeature = tuple[int, dict, object]
+# (fid, tile properties, shapely geometry in EPSG:4326[, minzoom]): the optional 4th item keeps a
+# feature out of tiles below that zoom (tippecanoe: the per-feature "tippecanoe.minzoom").
+TileFeature = tuple
 
 
 def tippecanoe_path() -> str | None:
@@ -58,13 +59,12 @@ def write_ndjson(path: Path, features: Iterable[TileFeature]) -> int:
     """Newline-delimited GeoJSON for tippecanoe (`id` = numeric feature id)."""
     n = 0
     with path.open("w", encoding="utf-8") as f:
-        for fid, props, geom in features:
-            f.write(
-                json.dumps(
-                    {"type": "Feature", "id": fid, "properties": props, "geometry": geojson_geometry(geom)},
-                    separators=(",", ":"),
-                )
-            )
+        for feat in features:
+            fid, props, geom = feat[:3]
+            obj = {"type": "Feature", "id": fid, "properties": props, "geometry": geojson_geometry(geom)}
+            if len(feat) > 3 and feat[3] is not None:
+                obj["tippecanoe"] = {"minzoom": int(feat[3])}
+            f.write(json.dumps(obj, separators=(",", ":")))
             f.write("\n")
             n += 1
     return n
@@ -136,14 +136,19 @@ def build_pmtiles_python(
         y = (0.5 - np.log((1 + s) / (1 - s)) / (4 * np.pi)) * world
         return np.column_stack([x, y])
 
-    projected = [(fid, props, shapely.transform(geom, project)) for fid, props, geom in features]
+    projected = [
+        (f[0], f[1], shapely.transform(f[2], project), f[3] if len(f) > 3 and f[3] is not None else minzoom)
+        for f in features
+    ]
 
     tiles: dict[int, bytes] = {}
     for z in range(minzoom, maxzoom + 1):
         scale = 2.0 ** (z - maxzoom)
         n_tiles = 2**z
         buckets: dict[tuple[int, int], list] = defaultdict(list)
-        for fid, props, g in projected:
+        for fid, props, g, fminzoom in projected:
+            if z < fminzoom:
+                continue
             gz = g if z == maxzoom else shapely.transform(g, lambda c, s=scale: c * s)
             if kind == "point":
                 x, y = gz.x, gz.y
@@ -170,9 +175,10 @@ def build_pmtiles_python(
     if not tiles:
         raise RuntimeError(f"no tiles produced for layer {layer!r}")
 
-    bounds = shapely.total_bounds([g for _, _, g in features])
+    bounds = shapely.total_bounds([f[2] for f in features])
     fields: dict[str, str] = {}
-    for _, props, _ in features:
+    for f in features:
+        props = f[1]
         for k, v in props.items():
             if k not in fields and v is not None:
                 fields[k] = "String" if isinstance(v, str) else ("Boolean" if isinstance(v, bool) else "Number")

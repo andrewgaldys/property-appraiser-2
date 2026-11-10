@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
 import shutil
 import statistics
 from collections import defaultdict
@@ -26,12 +27,15 @@ from .config import (
     DETAIL_FIELDS,
     OUT_DIR,
     OWNER_ITEM_FIELDS,
+    POINT_FIELDS,
     POINT_ZOOMS,
     POLYGON_ZOOMS,
     PORTFOLIO_MAX_ITEMS,
+    RIM_WIDTH_M,
+    RIM_ZOOM,
     TILE_FIELDS,
 )
-from .dor_codes import ASSET_CLASSES, PRIMARY_CLASSES
+from .dor_codes import ASSET_CLASSES, PRIMARY_CLASSES, describe
 from .entity import assign_owner_keys, build_owner_index
 from .schema import finalize_record
 from .tiler import (
@@ -62,8 +66,49 @@ def _quantiles(values: list[float], qs=(0.05, 0.25, 0.5, 0.75, 0.95)) -> list[fl
     return [round(cuts[int(q * 100) - 1], 4) for q in qs]
 
 
+_HOUSE_NUMBER = re.compile(r"^(\d+[A-Z]?)\b")
+
+
 def tile_properties(r: dict) -> dict:
     return {alias: r[field] for field, alias in TILE_FIELDS.items() if r.get(field) is not None}
+
+
+def point_properties(r: dict) -> dict:
+    """Slim centroid attributes + `hn` (house number) for the z15+ map labels."""
+    props = {TILE_FIELDS[f]: r[f] for f in POINT_FIELDS if r.get(f) is not None}
+    m = _HOUSE_NUMBER.match(r.get("site_address") or "")
+    if m:
+        props["hn"] = m.group(1)
+    return props
+
+
+def edge_bands(geoms: list, width_m: float) -> list:
+    """The band within `width_m` of each polygon's boundary (whole polygon if it is thinner than that).
+
+    Buffered in a local metric frame (equirectangular at the data's mean latitude: under 1% scale
+    error across the three counties), then mapped back to degrees.
+    """
+    import math
+
+    import numpy as np
+    import shapely
+
+    if not geoms:
+        return []
+    lat0 = float(np.mean([g.centroid.y for g in geoms]))
+    k = np.array([111_320.0 * math.cos(math.radians(lat0)), 110_574.0])
+    metric = shapely.transform(np.asarray(geoms, dtype=object), lambda c: c * k)
+    inner = shapely.buffer(metric, -width_m, join_style="mitre", mitre_limit=2.0)
+    bands = shapely.transform(shapely.difference(metric, inner), lambda c: c / k)
+    out = []
+    for b in bands:
+        if b is not None and not b.is_empty and not b.is_valid:
+            b = shapely.make_valid(b)
+            if b.geom_type not in ("Polygon", "MultiPolygon"):
+                parts = [p for p in getattr(b, "geoms", []) if p.geom_type in ("Polygon", "MultiPolygon")]
+                b = shapely.union_all(parts) if parts else None
+        out.append(None if b is None or b.is_empty else b)
+    return out
 
 
 def clean_out_dir(out_dir: Path) -> None:
@@ -84,6 +129,7 @@ def publish(
     attribution: str,
     tax_roll_year: int | None = None,
     as_of_year: int = AS_OF_YEAR,
+    sales_from: int | None = None,
     shard_hex: int = 1,
     tiler: str = "auto",
     write_geojson: bool = False,
@@ -138,7 +184,11 @@ def publish(
 
     # 5. Vector tiles.
     poly_feats = [(r["fid"], tile_properties(r), r["geometry"]) for r in records]
-    point_feats = [(r["fid"], tile_properties(r), shapely.Point(r["lon"], r["lat"])) for r in records]
+    # Rims share the parcel's feature id, so hover / selection feature-state lights both at once.
+    rims = edge_bands([r["geometry"] for r in records], RIM_WIDTH_M)
+    poly_feats += [(r["fid"], {**props, "e": 1}, band, RIM_ZOOM)
+                   for r, (_, props, _), band in zip(records, poly_feats, rims) if band is not None]
+    point_feats = [(r["fid"], point_properties(r), shapely.Point(r["lon"], r["lat"])) for r in records]
     if tiler == "auto":
         tiler = "tippecanoe" if tippecanoe_path() else ("python" if python_tiler_available() else "none")
     meta = dict(attribution=attribution, description=f"{source_label} - Martin, Palm Beach, St. Lucie parcels")
@@ -185,13 +235,13 @@ def publish(
     # 6. Manifest.
     manifest = build_manifest(records, names_idx, addrs_idx, source_kind=source_kind, source_label=source_label,
                               attribution=attribution, tax_roll_year=tax_roll_year, as_of_year=as_of_year,
-                              shard_hex=shard_hex, tiler=tiler)
+                              sales_from=sales_from, shard_hex=shard_hex, tiler=tiler)
     _dump(out_dir / "manifest.json", manifest)
     return manifest
 
 
 def build_manifest(records, names_idx, addrs_idx, *, source_kind, source_label, attribution, tax_roll_year,
-                   as_of_year, shard_hex, tiler) -> dict:
+                   as_of_year, shard_hex, tiler, sales_from=None) -> dict:
     import shapely
 
     bounds = [round(v, 5) for v in shapely.total_bounds([r["geometry"] for r in records])]
@@ -218,6 +268,8 @@ def build_manifest(records, names_idx, addrs_idx, *, source_kind, source_label, 
         if code in PRIMARY_CLASSES or class_counts.get(code)
     ]
 
+    use_codes = {uc: describe(uc) for uc in sorted({r["use_code"] for r in records if r["use_code"]})}
+
     cities: dict[tuple[int, str], list[dict]] = defaultdict(list)
     for r in records:
         if r["site_city"]:
@@ -225,10 +277,12 @@ def build_manifest(records, names_idx, addrs_idx, *, source_kind, source_label, 
     top_cities = sorted(cities.items(), key=lambda kv: -len(kv[1]))[:10]
     city_list = []
     for (code, name), rs in top_cities:
-        xs = [r["lon"] for r in rs]
-        ys = [r["lat"] for r in rs]
+        # 2nd-98th percentile box: one mis-coded parcel must not zoom the "jump to" view out to a county.
+        xs = sorted(r["lon"] for r in rs)
+        ys = sorted(r["lat"] for r in rs)
+        lo, hi = int(len(rs) * 0.02), max(int(len(rs) * 0.98) - 1, 0)
         city_list.append({"name": name, "county": code, "count": len(rs),
-                          "bbox": [min(xs), min(ys), max(xs), max(ys)]})
+                          "bbox": [xs[lo], ys[lo], xs[hi], ys[hi]]})
 
     def metric(field):
         return _quantiles([r.get(field) for r in records])
@@ -244,11 +298,14 @@ def build_manifest(records, names_idx, addrs_idx, *, source_kind, source_label, 
             "attribution": attribution,
             "tax_roll_year": tax_roll_year,
             "as_of_year": as_of_year,
+            # Set when the source only carries recent sales: "no sale" then means "none since this year".
+            "sales_from": sales_from,
         },
         "bounds": bounds,
         "counties": counties,
         "cities": city_list,
         "asset_classes": asset_classes,
+        "use_codes": use_codes,
         "stats": {
             "parcels": len(records),
             "just_value": sum(r["just_value"] or 0 for r in records),
@@ -268,7 +325,8 @@ def build_manifest(records, names_idx, addrs_idx, *, source_kind, source_label, 
         "tiles": {
             "format": tile_kind,
             "polygons": {"url": "parcels.pmtiles" if tile_kind == "pmtiles" else "parcels.geojson",
-                         "layer": "parcels", "minzoom": POLYGON_ZOOMS[0], "maxzoom": POLYGON_ZOOMS[1]},
+                         "layer": "parcels", "minzoom": POLYGON_ZOOMS[0], "maxzoom": POLYGON_ZOOMS[1],
+                         **({"rim_minzoom": RIM_ZOOM} if tile_kind == "pmtiles" else {})},
             "points": {"url": "points.pmtiles" if tile_kind == "pmtiles" else "parcels.geojson",
                        "layer": "points", "minzoom": POINT_ZOOMS[0], "maxzoom": POINT_ZOOMS[1]},
             "fields": TILE_FIELDS,

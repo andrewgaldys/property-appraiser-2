@@ -1,15 +1,20 @@
 # Property Appraiser 2.0 · V0.1
 
 3D real-estate and parcel intelligence for **Martin (53)**, **St. Lucie (66)** and **Palm Beach (60)** counties, Florida.
-It is a static site (GitHub Pages, no server, no API keys) that streams parcel vector tiles from one PMTiles file with HTTP Range requests.
-A Python pipeline turns Florida Department of Revenue (FDOR) tax-roll files into that bundle.
+It is a static site (GitHub Pages, no server, no API keys) that streams parcel vector tiles from PMTiles files with HTTP Range requests.
+A Python pipeline pulls the parcels from the Florida Statewide Cadastral layer (or reads FDOR tax-roll files) and writes that bundle.
 
-- 3D parcel extrusions by **just value**, **building SF** or **hold period** (or flat 2D), shaded by value, SF, hold or land share.
+- **Real parcels**: every multifamily, commercial, industrial and institutional parcel in the three counties on the 2026 roll (46,733 parcels, $109.2B just value).
+- 3D parcel extrusions by **just value**, **building SF** or **hold period** (or flat 2D), colored by **asset class** (default), value, SF, hold or land share.
+- Every parcel is outlined: class-colored strokes in 2D, and a light **roof rim** on each 3D block. House numbers and building SF label parcels from zoom 15.
+- Hover tooltip: site address, property subtype, assessed value, owner. A compact asset-class legend sits bottom-left.
+- **Satellite**: a spyglass lens around the cursor (zoom 14+, toggle with `S`), a Dark / Hybrid / Split basemap switch, and a live 280 px aerial of the selected parcel at the top of the drawer.
 - Filters: county, asset class, minimum hold period, minimum lot size, maximum building-to-land value ratio. The "In view" totals respect them.
 - Property drawer: valuation and land/improvement split, physicals, last sale and hold signal, and a **true-owner portfolio** across all three counties, matched on normalized owner name *or* mailing address.
-- One-click, print-styled **Property Brief** (Letter, Save as PDF), with shareable parcel links (`#…&p=<parcel id>`).
+- One-click, print-styled **Property Brief** (Letter, Save as PDF) with a 3D view and an aerial, plus shareable parcel links (`#…&p=<parcel id>`).
 
-> The repo ships with **synthetic sample data** (510 parcels, 12 cross-county LLC portfolios). Every owner, address and value in it is fictional.
+> `web/public/data/` holds real public tax-roll records, including owner names and owner mailing addresses as the county property appraisers publish them.
+> For offline development, `pipeline/generate_sample_data.py` still writes a fully synthetic 510-parcel bundle in its place.
 
 ## Quick start
 
@@ -25,37 +30,81 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:5173. The sample bundle in `web/public/data/` is committed, so nothing else is needed.
+Open http://localhost:5173.
 
-To regenerate the sample (Python 3.10+):
+Pipeline setup (Python 3.10+):
 
 ```bash
 python3 -m venv pipeline/.venv && pipeline/.venv/bin/pip install -r pipeline/requirements.txt
-```
-
-```bash
-pipeline/.venv/bin/python pipeline/generate_sample_data.py
 ```
 
 ## Layout
 
 ```
 pipeline/
-  generate_sample_data.py   synthetic sample -> web/public/data (+ --emit-raw: FDOR-format test files)
-  build_fdor.py             NAL + SDF + parcel polygons -> web/public/data (production)
-  build_tiles.py            re-tile from pipeline/out/parcels.parquet (e.g. after installing tippecanoe)
-  sync_postgis.py           optional: load the joined table into PostGIS / Supabase
-  pa2/                      schema, DOR use codes, owner resolution, MVT encoder, PMTiles writer, publisher
-web/                        Vite + TypeScript + MapLibre GL JS 6 + pmtiles
-  public/data/              manifest.json, parcels.pmtiles, points.pmtiles, parcels/*.json, owners/*.json
-.github/workflows/deploy.yml  build web/ and publish to GitHub Pages
+  fetch_real_tricounty_parcels.py  Florida Statewide Cadastral -> web/public/data (what the site ships)
+  build_fdor.py                    alternative: FDOR NAL + SDF + parcel polygon files -> web/public/data
+  generate_sample_data.py          synthetic sample -> web/public/data (+ --emit-raw: FDOR-format test files)
+  build_tiles.py                   re-tile from pipeline/out/parcels.parquet (e.g. after installing tippecanoe)
+  sync_postgis.py                  optional: load the joined table into PostGIS / Supabase
+  pa2/                             schema, DOR use codes, owner resolution, MVT encoder, PMTiles writer, publisher
+web/                               Vite + TypeScript + MapLibre GL JS 6 + pmtiles
+  public/data/                     manifest.json, parcels.pmtiles, points.pmtiles, parcels/*.json, owners/*.json
+.github/workflows/deploy.yml       build web/ and publish to GitHub Pages
 ```
 
-**Data bundle.** The polygon tiles (z12–15) and centroid tiles (z5–12) carry only what the map filters and draws.
-Full parcel records sit in small JSON shards keyed by hash(parcel ID), and owner portfolios in shards keyed by owner group.
-A click fetches one shard, whatever the dataset size.
+**Data bundle (61 MB).** Polygon tiles (z12–15, 23 MB) and centroid tiles (z8–12, 10 MB) carry only what the map filters, colors and labels.
+Full parcel records sit in 256 small JSON shards keyed by hash(parcel ID), and owner portfolios in shards keyed by owner group.
+A click fetches one shard, whatever the dataset size. The overview (zoom 8) loads about 1.7 MB of tiles; every file is under 25 MB.
 
-## Production data (FDOR)
+## Real parcels: Florida Statewide Cadastral
+
+```bash
+pipeline/.venv/bin/python pipeline/fetch_real_tricounty_parcels.py
+```
+
+This queries the statewide cadastral FeatureServer (FDOR's tax roll joined to county parcel polygons, published on ArcGIS Online):
+`https://services9.arcgis.com/Gh9awoU677aKree0/arcgis/rest/services/Florida_Statewide_Cadastral/FeatureServer/0`.
+It then publishes `web/public/data/` and `pipeline/out/parcels.parquet`. A first run takes a few minutes; a cached re-run takes about 30 seconds.
+
+**What it keeps (DOR use codes).** 003 multifamily 10+, 008 multifamily 2–9, 010–039 vacant commercial and commercial (stores, centers, offices, hotels, mobile home *parks* = 028, …), 040–049 vacant industrial and industrial, 070–079 institutional.
+
+Two codes are opt-in, because each record is one dwelling rather than an investment property:
+- **004 condominium units** (`--include-condo-units`). Every unit is its own parcel: well over 85,000 more records in these counties (more than everything else combined), mostly stacked footprints of the same buildings.
+- **002 individual mobile homes** (`--include-mobile-homes`, 9,500+ records).
+
+**How it queries.** On this statewide table only `CO_NO`, `OBJECTID`, `PARCEL_ID`, `OWN_NAME` and the shape are indexed. County-wide filters on `DOR_UC` time out. Each county does occupy one contiguous `OBJECTID` block, though.
+So the script walks each block in 25,000-ID windows (40 in all), pages through each window with `resultOffset` / `resultRecordCount=2000` (`outSR=4326`), and simplifies server-side by ~0.5 m.
+Reliability:
+- A page that keeps timing out is retried at the same offset with half the page size, down to 250.
+- A window that still fails does not stop the others; failed windows get a second, sequential pass.
+- If anything is still missing, nothing is published and the exit code is 1. Re-running resumes from the cache.
+
+Downloads are cached per window under `pipeline/raw/cadastral/<fingerprint>/`. A narrower code list re-uses a broader earlier download instead of fetching again.
+
+| Option | Use |
+|---|---|
+| `--include-condo-units` / `--include-mobile-homes` | Add DOR 004 / 002 (see above) |
+| `--codes 003,008,…` | Any other code list |
+| `--sdf "pipeline/raw/*SDF*.zip"` | Older FDOR Sales Data Files to extend sale history (see *Sales history* below) |
+| `--refresh` | Ignore the cache and download everything again |
+| `--allow-partial` | Publish even if some windows still fail after the retry pass |
+| `--workers 4` / `--simplify 0.000005` | Parallel requests (keep it polite, ≤ 6) / server-side simplification in degrees (0 = full detail) |
+| `--shard-hex 2` / `--tiler auto\|tippecanoe\|python` | Shard count (256) / tiler (tippecanoe if installed, else pure Python) |
+| `--fetch-only` | Fill the cache without publishing |
+
+Run of 10 Nov 2026 (2026 roll): Palm Beach 33,851 · St. Lucie 7,861 · Martin 5,021.
+By class: Retail / Commercial 17,970 · Multifamily 2–9 12,793 · Industrial 7,908 · Vacant Commercial / Industrial 4,530 · Institutional 2,513 · Multifamily 10+ 1,019.
+
+### Sales history and hold periods
+
+The cadastral layer carries only the roll's two most recent sale slots (`SALE_YR1/2`). On the 2026 roll those cover 2025–26 sales, so just 7% of these parcels show a sale.
+The app is explicit about this: it shows "No sale since 2025" rather than "no sale on record". The hold filter counts unsold parcels as held ≥ 1 year, and the filter panel notes the limit.
+
+For real hold periods, download older **SDF** (Sales Data File) zips from the FDOR Data Portal (below). Each roll's SDF covers roughly the year before it.
+Pass them with `--sdf`. The script takes each parcel's latest sale across all of them and records where the history starts, so captions become e.g. "No sale since 2014".
+
+## Alternative: FDOR tax-roll files
 
 ### 1 · Download
 
@@ -65,7 +114,7 @@ Folder names follow the roll year (`2026F` = final 2026 roll, `2026P` = prelimin
 | Data | Portal path | Files for counties 53 / 60 / 66 |
 |---|---|---|
 | **NAL**: Name-Address-Legal (values, owner, use code, physicals, recent sales) | Tax Roll Data Files → NAL → `2026F` | `Martin 53 Final NAL 2026.zip`, `Palm Beach 60 Final NAL 2026.zip`, `Saint Lucie 66 Final NAL 2026.zip` |
-| **SDF**: Sales Data File | Tax Roll Data Files → SDF → `2026F` | `Martin 53 Final SDF 2026.zip`, `Palm Beach 60 Final SDF 2026.zip`, `Saint Lucie 66 Final SDF 2026.zip` |
+| **SDF**: Sales Data File | Tax Roll Data Files → SDF → `2026F` (and earlier years for history) | `Martin 53 Final SDF 2026.zip`, `Palm Beach 60 Final SDF 2026.zip`, `Saint Lucie 66 Final SDF 2026.zip` |
 | **Parcel polygons** (shapefiles) | Map Data → `2026F` → `2026F PAR` | `martin_2026Ppar.zip`, `palmbeach_2026Ppar.zip`, `stlucie_2026Ppar.zip` |
 | Field definitions | User Guides → `2026 Users guide and quick reference` | NAL/SDF layouts and codes |
 
@@ -82,7 +131,7 @@ pipeline/.venv/bin/python pipeline/build_fdor.py
 
 The build:
 1. reads only the NAL columns it needs (filtered to `CO_NO` 53/60/66),
-2. takes each parcel's most recent sale of at least $100 across NAL `SALE_*1/2` and the SDF,
+2. takes each parcel's most recent sale of at least $100 across NAL `SALE_*1/2` and every SDF given (several years work),
 3. reads, repairs and reprojects the polygons and dissolves multi-part parcels,
 4. joins on the normalized parcel ID (dashes and spaces removed),
 5. resolves owner portfolios and writes `web/public/data/` plus `pipeline/out/parcels.parquet`.
@@ -93,17 +142,16 @@ It logs the polygon match rate per county. Condo units usually have no individua
 |---|---|
 | `--classes MF10,MF2_9,COM,IND,VAC_COM` | Investment classes only: a much smaller bundle |
 | `--shard-hex 3` (default) | 4,096 detail/owner shards; use `2` for small subsets |
-| `--tiler tippecanoe\|python\|none` | Default `auto`. Install tippecanoe for the full roll: `brew install tippecanoe` (or build [felt/tippecanoe](https://github.com/felt/tippecanoe)); the pure-Python tiler is fine for the sample or one county |
+| `--tiler tippecanoe\|python\|none` | Default `auto`. Install tippecanoe for the full roll: `brew install tippecanoe` (or build [felt/tippecanoe](https://github.com/felt/tippecanoe)); the pure-Python tiler is fine up to ~50k parcels |
 | `--geom-id-field PIN` / `--assume-crs EPSG:2236` | Only if auto-detection of the parcel-ID column or the CRS fails |
 | `--as-of-year 2026` / `--min-sale-price 100` | Hold-period base year / ignore nominal transfers |
 
-Re-tile without re-reading FDOR files: `pipeline/.venv/bin/python pipeline/build_tiles.py` (`--print-commands` prints the tippecanoe commands).
+Re-tile without re-reading the source: `pipeline/.venv/bin/python pipeline/build_tiles.py` (`--print-commands` prints the tippecanoe commands).
 
-### 3 · Swap the sample for production
+### Bundle size and hosting
 
-`build_fdor.py` overwrites the sample files in `web/public/data/` (and nothing else there).
-Run `npm run build` and the site serves production data.
-Check the size with `du -sh web/public/data`. The full roll (~850k parcels) is several hundred MB: too big to commit, since GitHub rejects files over 100 MB and Pages sites must stay under 1 GB. Pick one of:
+Both builders overwrite only their own files in `web/public/data/`. Check the size with `du -sh web/public/data`.
+The cadastral bundle (61 MB, largest file 23 MB) can be committed. The full roll (~850k parcels) is several hundred MB, and GitHub rejects files over 100 MB, while Pages sites must stay under 1 GB. For that size, pick one of:
 
 - **GitHub Release asset (works with the included workflow).** Release assets can be up to 2 GB.
   ```bash
@@ -113,9 +161,36 @@ Check the size with `du -sh web/public/data`. The full roll (~850k parcels) is s
   gh release create data-2026F pa2-data.tar.gz --title "FDOR 2026F data bundle" --notes "Martin, St. Lucie, Palm Beach"
   ```
   Then add the repository variable `DATA_RELEASE_TAG=data-2026F` (Settings → Secrets and variables → Actions → Variables).
-  The deploy workflow unpacks it over the sample before building.
+  The deploy workflow unpacks it over `web/public/data/` before building.
 - **Object storage (R2 / S3).** Upload `web/public/data/` and set the repository variable `VITE_DATA_URL` to its public URL.
   Allow CORS `GET`/`HEAD` with the `Range` header and expose `ETag` (see the PMTiles cloud-storage docs).
+
+## Map encoding
+
+| Asset class | Color | DOR codes |
+|---|---|---|
+| Multifamily 10+ | `#3B82F6` blue | 003 |
+| Multifamily 2–9 | `#06B6D4` cyan | 008 |
+| Retail / Commercial (incl. office, hotels) | `#F59E0B` amber | 011–039 |
+| Industrial | `#A855F7` violet | 041–049 |
+| Vacant Commercial / Industrial | `#10B981` emerald | 010, 040 |
+| Institutional | `#94A3B8` slate | 070–079 |
+
+- **Outlines.** In 2D every parcel has a class-colored stroke: 1.5 px at zoom 14, 2.5 px at zoom 16, thinner further out. Hover, selection and same-owner portfolio parcels switch to white.
+  MapLibre cannot raise a line layer to roof height, so in 3D each parcel gets a **roof rim** instead. The rim is a 2 m band inside the boundary (shipped in the z15 tiles as features flagged `e: 1`), extruded just above the block in a lighter tint of the class color.
+- **Labels** (zoom 15+): house number over building SF; where labels collide, higher-value parcels win.
+- **Tooltip**: assessed value (just value if none), site address, subtype (e.g. "Multifamily 10+" or the DOR description, such as "Community Shopping Center"), owner, then just value, county, SF, units and hold.
+- **Legend** (bottom-left): class swatches with counts in "Class" mode; the metric ramp plus "Outline: asset class" in the other color modes.
+
+## Satellite imagery
+
+- **Spyglass lens.** Press `S` or use the top-bar button (`Satellite Lens: ON/OFF`). From zoom 14, a 120 px-radius circle around the cursor shows imagery with white parcel lines.
+  It is a second, non-interactive map, camera-locked to the main one and clipped to the circle, so hover and click still reach the parcels. The tooltip moves out of its way.
+- **Basemap switch** (top-left): **Dark** (monochrome), **Hybrid** (imagery + white street and place labels + class outlines over translucent fills), **Split** (dark left, imagery right; drag the divider or use the arrow keys).
+- **Drawer aerial**: a 280 px live thumbnail fitted to the selected parcel, boundary in white. The brief prints it next to the 3D view.
+
+Imagery: Esri World Imagery tiles (`https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}`), keyless, credited on the map as "Imagery © Esri, Maxar, Earthstar Geographics, GIS User Community".
+Esri's terms of use apply to this service. Check them before a public or commercial launch; keyed access is available through an ArcGIS Location Platform account if needed.
 
 ## Deploy to GitHub Pages
 
@@ -131,22 +206,15 @@ Derived fields (pipeline/pa2/schema.py):
 
 | Field | Definition |
 |---|---|
+| `assessed_value` | `AV_NSD`, assessed value for non-school levies |
 | `building_value` | `JV − LND_VAL` (floored at 0) |
 | `land_to_value_ratio` | `LND_VAL / JV` |
 | `bldg_to_land_ratio` | `(JV − LND_VAL) / LND_VAL`: the map's "max building / land value" screen |
 | `hold_period_years` | `2026 − year of last sale` (`--as-of-year`) |
 | `last_sale_qualified` | `true` for qualification code 01, `false` for 11+, otherwise null (raw code kept) |
+| `tot_lvg_area` | `TOT_LVG_AR`; values under 10 SF are treated as not reported. The 2026 roll carries `1` on ~7k improved office, warehouse and retail parcels. |
 
-Asset classes come from the statewide DOR use code (`DOR_UC`):
-
-| Class | DOR codes |
-|---|---|
-| Multifamily 10+ | 003 |
-| Multifamily 2–9 | 008 |
-| Retail / Commercial | 011–039 (stores, centers, office, restaurants, hotels, auto…) |
-| Industrial | 041–049 |
-| Vacant Commercial | 010, 040 |
-| Single Family / Condo / other | 001 / 004–005 / 000, 002, 006–009, 050–099 (shown when present) |
+Other asset classes appear when their codes are fetched: Single Family 001, Condo 004–005, other residential 000, 002, 006–009, and 050–099.
 
 **Owner resolution** (pipeline/pa2/entity.py). Names are uppercased, punctuation is stripped, and entity suffixes are unified (`L.L.C.`/`Limited Liability Company` → `LLC`, `Trustee` → `TR`, …).
 Mailing addresses are standardized: `SUITE`/`STE`/`#` → `#`, directionals and street types abbreviated, `P.O. Box` → `PO BOX`, `C/O` lines skipped, ZIP5.
@@ -169,6 +237,6 @@ This creates `pa2_parcels` (indexed), the view `pa2_owner_portfolios` and the fu
 ## Notes and limits (V0.1)
 
 - Basemap: OpenFreeMap vector tiles (no key), restyled monochrome. Override with `VITE_BASEMAP_STYLE` (any MapLibre style URL).
-- Sample parcels sit on simplified street grids. Cluster centres were checked against OpenFreeMap water polygons: no parcel sits in the ocean, the lagoon or a river, though some corners overlap stormwater ponds.
-- Last sale and hold come only from the sale fields in NAL/SDF. Parcels without one show "No sale on record" and are excluded by the hold filter.
+- Sale history: see *Sales history and hold periods*. Without older SDF files, hold periods exist only for the 7% of parcels that sold in 2025–26.
+- Condo units (004) and individual mobile homes (002) are excluded by default; see the opt-in flags.
 - Not yet included: address or owner search, comps, and fuzzy/Sunbiz entity matching.

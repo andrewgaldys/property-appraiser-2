@@ -7,3 +7,6 @@ pandas>=2.1
 geopandas>=1.0
 pyogrio>=0.9
 pyarrow>=15
+
+# HTTPS certificates for fetch_real_tricounty_parcels.py (python.org builds ship without a CA bundle)
+certifi>=2024.2

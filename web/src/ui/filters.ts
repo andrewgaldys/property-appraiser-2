@@ -2,6 +2,8 @@ import {
   APP_NAME,
   APP_VERSION,
   BTL_STEPS,
+  CLASS_COLORS,
+  CLASS_FALLBACK,
   CLASS_SHORT,
   COUNTY_META,
   COUNTY_ORDER,
@@ -134,6 +136,7 @@ export class FilterPanel {
             this.setFilters({ classes: [...cur] });
           },
         },
+        h('i', { class: 'chip-sw', style: { background: CLASS_COLORS[c.code] ?? CLASS_FALLBACK } }),
         CLASS_SHORT[c.code] ?? c.label,
         h('span', { class: 'n' }, int(c.count)),
       ),
@@ -159,7 +162,7 @@ export class FilterPanel {
     this.extrudeSeg = segmented<string>('3D extrusion', EXTRUDE_MODES.map((x) => ({ value: x.id, label: x.label })), (v) =>
       this.store.set({ extrude: v as AppState['extrude'] }),
     );
-    this.shadeSeg = segmented<string>('Shade by', SHADE_MODES.map((x) => ({ value: x.id, label: x.label })), (v) =>
+    this.shadeSeg = segmented<string>('Color by', SHADE_MODES.map((x) => ({ value: x.id, label: x.label })), (v) =>
       this.store.set({ shade: v as AppState['shade'] }),
     );
 
@@ -222,7 +225,18 @@ export class FilterPanel {
         'section',
         { class: 'blk' },
         h('h3', null, 'Screens'),
-        rangeRow('Min hold period', hold),
+        rangeRow(
+          'Min hold period',
+          hold,
+          m.source.sales_from
+            ? h(
+                'p',
+                { class: 'cap' },
+                `Sales in this source start in ${m.source.sales_from}. Parcels with no sale since then count as held ≥ `,
+                `${Math.max(m.source.as_of_year - m.source.sales_from, 0)} yr; longer screens need the FDOR sales history (README).`,
+              )
+            : undefined,
+        ),
         rangeRow('Min lot size', lot),
         rangeRow('Max building / land value', btl, btl.cap),
       ),
@@ -231,7 +245,7 @@ export class FilterPanel {
         { class: 'blk' },
         h('h3', null, '3D extrusion'),
         this.extrudeSeg.el,
-        h('h3', { class: 'sub' }, 'Shade by'),
+        h('h3', { class: 'sub' }, 'Color by'),
         this.shadeSeg.el,
       ),
       h(

@@ -6,6 +6,8 @@ import type {
 } from '@maplibre/maplibre-gl-style-spec';
 import {
   BTL_STEPS,
+  CLASS_COLORS,
+  CLASS_FALLBACK,
   COLOR_HOVER,
   COLOR_PORTFOLIO,
   COLOR_SELECTED,
@@ -23,13 +25,25 @@ export const SRC_PTS = 'parcel-centroids';
 export const L_FLAT = 'parcel-flat';
 export const L_OUTLINE = 'parcel-outline';
 export const L_3D = 'parcel-3d';
+export const L_RIM = 'parcel-rim';
 export const L_POINTS = 'parcel-points';
-export const PARCEL_LAYERS = [L_FLAT, L_OUTLINE, L_3D, L_POINTS];
+export const L_LABELS = 'parcel-labels';
+export const PARCEL_LAYERS = [L_FLAT, L_OUTLINE, L_3D, L_RIM, L_POINTS, L_LABELS];
+/**
+ * Rim features (`e: 1`, max-zoom polygon tiles only) are a narrow band inside each parcel
+ * boundary, extruded a hair above the 3D block so roofs get an outline. Every other polygon
+ * consumer must skip them.
+ */
+export const NOT_RIM: FilterSpecification = ['!', ['has', 'e']];
+const IS_RIM: Expr = ['has', 'e'];
+/** Labels appear from this zoom. */
+export const LABEL_MIN_ZOOM = 15;
 
 type Expr = ExpressionSpecification;
+export type MetricMode = Exclude<ShadeMode, 'class'>;
 const num = (key: string, fallback: number): Expr => ['number', ['get', key], fallback];
 
-const SHADE_FIELD: Record<ShadeMode, { tile: string; fallback: number; quantile: keyof Manifest['quantiles'] }> = {
+const SHADE_FIELD: Record<MetricMode, { tile: string; fallback: number; quantile: keyof Manifest['quantiles'] }> = {
   value: { tile: 'jv', fallback: 0, quantile: 'just_value' },
   sqft: { tile: 'sf', fallback: 0, quantile: 'tot_lvg_area' },
   hold: { tile: 'hold', fallback: -1, quantile: 'hold_period_years' },
@@ -37,18 +51,36 @@ const SHADE_FIELD: Record<ShadeMode, { tile: string; fallback: number; quantile:
 };
 
 /** Ramp breakpoints = dataset percentiles (p5..p95), forced strictly ascending. */
-export function shadeStops(manifest: Manifest, mode: ShadeMode): number[] {
+export function shadeStops(manifest: Manifest, mode: MetricMode): number[] {
   const q = [...(manifest.quantiles[SHADE_FIELD[mode].quantile] as number[])];
   const eps = mode === 'ltv' ? 0.001 : 1;
   for (let i = 1; i < q.length; i++) if (q[i]! <= q[i - 1]!) q[i] = q[i - 1]! + eps;
   return q;
 }
 
-function ramp(manifest: Manifest, mode: ShadeMode, colors: string[]): Expr {
+function ramp(manifest: Manifest, mode: MetricMode, colors: string[]): Expr {
   const f = SHADE_FIELD[mode];
   const stops = shadeStops(manifest, mode);
   const out: unknown[] = ['interpolate', ['linear'], num(f.tile, f.fallback)];
   stops.forEach((s, i) => out.push(s, colors[Math.min(i, colors.length - 1)]));
+  return out as Expr;
+}
+
+/** Mix a hex color toward `to` by t (0 = unchanged, 1 = `to`). */
+function mix(hex: string, t: number, to: string): string {
+  if (!t) return hex;
+  const rgb = (h: string) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+  const a = rgb(hex);
+  const b = rgb(to);
+  return `#${a.map((v, i) => Math.round(v + (b[i]! - v) * t).toString(16).padStart(2, '0')).join('')}`;
+}
+
+/** Asset-class color for every parcel; dim > 0 pushes toward the dark surface, lift > 0 toward white. */
+function classColors(dim = 0, lift = 0): Expr {
+  const out: unknown[] = ['match', ['get', 'cls']];
+  const tone = (c: string) => (lift ? mix(c, lift, '#ffffff') : mix(c, dim, '#0b0b0b'));
+  for (const [code, color] of Object.entries(CLASS_COLORS)) out.push(code, tone(color));
+  out.push(tone(CLASS_FALLBACK));
   return out as Expr;
 }
 
@@ -65,31 +97,60 @@ export function inPortfolio(sel: Selection | null): Expr | null {
   return parts.length === 1 ? parts[0]! : (['any', ...parts] as Expr);
 }
 
+/**
+ * Fill / extrusion / dot color. "Class" mode colors by asset class; metric modes use the
+ * neutral ramp. A selection dims everything else; its portfolio keeps full strength.
+ */
 export function colorExpr(manifest: Manifest, s: AppState, variant: 'polygons' | 'points' = 'polygons'): Expr {
   const sel = s.selection;
-  const unselected = variant === 'points' ? RAMP_POINTS : RAMP_NORMAL;
-  const base = ramp(manifest, s.shade, !sel ? unselected : s.focus ? RAMP_FOCUS : RAMP_SELECTED);
+  const byClass = s.shade === 'class';
+  const base = byClass
+    ? classColors(!sel ? 0 : s.focus ? 0.82 : 0.55)
+    : ramp(manifest, s.shade as MetricMode, !sel ? (variant === 'points' ? RAMP_POINTS : RAMP_NORMAL) : s.focus ? RAMP_FOCUS : RAMP_SELECTED);
   const cases: unknown[] = ['case'];
   if (sel) cases.push(isSelected(sel), COLOR_SELECTED);
-  cases.push(isHovered, COLOR_HOVER);
+  cases.push(isHovered, byClass ? classColors(0, 0.45) : COLOR_HOVER);
   const pf = inPortfolio(sel);
-  if (pf) cases.push(pf, COLOR_PORTFOLIO);
+  if (pf) cases.push(pf, byClass ? classColors() : COLOR_PORTFOLIO);
   cases.push(base);
   return cases as Expr;
 }
 
-function byHighlight<T extends number | string>(s: AppState, selected: T, portfolio: T, hover: T, rest: T): Expr {
+/** Every parcel gets a crisp stroke in its class color; white marks hover, selection and portfolio. */
+export function outlineColor(s: AppState): Expr {
+  const sel = s.selection;
   const cases: unknown[] = ['case'];
-  if (s.selection) cases.push(isSelected(s.selection), selected);
-  const pf = inPortfolio(s.selection);
-  if (pf) cases.push(pf, portfolio);
-  cases.push(isHovered, hover, rest);
+  if (sel) cases.push(isSelected(sel), '#ffffff');
+  const pf = inPortfolio(sel);
+  if (pf) cases.push(pf, '#ffffff');
+  cases.push(isHovered, '#ffffff', classColors(!sel ? 0 : s.focus ? 0.7 : 0.35));
   return cases as Expr;
 }
 
-export const outlineColor = (s: AppState): Expr =>
-  byHighlight(s, '#ffffff', '#cfcfcf', '#bdbdbd', s.focus ? '#1c1c1c' : s.selection ? '#2a2a2a' : '#363636');
-export const outlineWidth = (s: AppState): Expr => byHighlight(s, 2.6, 1.6, 1.4, 0.6);
+/** 3D roof outline: the class color lifted toward white; white marks hover, selection and portfolio. */
+export function rimColor(s: AppState): Expr {
+  const sel = s.selection;
+  const cases: unknown[] = ['case'];
+  if (sel) cases.push(isSelected(sel), '#ffffff');
+  const pf = inPortfolio(sel);
+  if (pf) cases.push(pf, '#ffffff');
+  const base = sel ? classColors(s.focus ? 0.8 : 0.45) : classColors(0, s.shade === 'class' ? 0.4 : 0);
+  cases.push(isHovered, '#ffffff', base);
+  return cases as Expr;
+}
+
+/** 1.5 px at z14 -> 2.5 px at z16 (thinner while zoomed out); highlights a step heavier. */
+export function outlineWidth(s: AppState): Expr {
+  const at = (base: number, pf: number, sel: number, hover: number): unknown => {
+    const cases: unknown[] = ['case'];
+    if (s.selection) cases.push(isSelected(s.selection), sel);
+    const p = inPortfolio(s.selection);
+    if (p) cases.push(p, pf);
+    cases.push(isHovered, hover, base);
+    return cases;
+  };
+  return ['interpolate', ['linear'], ['zoom'], 12, at(0.6, 1.2, 1.6, 1.2), 14, at(1.5, 2.4, 3, 2.2), 16, at(2.5, 3.2, 4, 3)] as Expr;
+}
 
 export function pointRadius(s: AppState): Expr {
   const at = (base: number, sel: number, pf: number): Expr | number => {
@@ -101,10 +162,17 @@ export function pointRadius(s: AppState): Expr {
     cases.push(base);
     return cases as Expr;
   };
-  return ['interpolate', ['linear'], ['zoom'], 5, at(2.2, 4.5, 3.5), 9, at(3.4, 6.5, 5), 12, at(5, 9, 7)] as Expr;
+  return ['interpolate', ['linear'], ['zoom'], 8, at(1.6, 4.5, 3.5), 10, at(2.6, 6, 4.5), 12, at(4, 8, 6)] as Expr;
 }
 
-export const pointStrokeWidth = (s: AppState): Expr => byHighlight(s, 2, 1.2, 1, 0);
+export const pointStrokeWidth = (s: AppState): Expr => {
+  const cases: unknown[] = ['case'];
+  if (s.selection) cases.push(isSelected(s.selection), 2);
+  const p = inPortfolio(s.selection);
+  if (p) cases.push(p, 1.2);
+  cases.push(isHovered, 1, 0);
+  return cases as Expr;
+};
 
 const HEIGHT_FIELD = { value: ['jv', 0], sqft: ['sf', 0], hold: ['hold', -1] } as const;
 
@@ -114,11 +182,28 @@ export function heightExpr(mode: ExtrudeMode): Expr | number {
   return ['interpolate', ['linear'], num(key, fallback), ...HEIGHT_STOPS[mode]] as Expr;
 }
 
-export function filterExpr(f: Filters): FilterSpecification {
-  const all: unknown[] = ['all'];
+/** The rim sits on the roof and rises 0.6 m, or 0.6% of the block height if that is more. */
+export function rimHeights(mode: ExtrudeMode): { base: Expr | number; top: Expr | number } {
+  const h = heightExpr(mode);
+  if (typeof h === 'number') return { base: h, top: h + 0.6 };
+  return { base: h, top: ['+', h, ['max', 0.6, ['*', h, 0.006]]] as Expr };
+}
+
+/**
+ * Hold period every unsold parcel is known to have when the source only carries recent sales
+ * (no sale since `sales_from` => held at least as_of_year - sales_from years); -1 = unknown.
+ */
+export function holdFloor(manifest: Manifest): number {
+  const { sales_from: from, as_of_year: asOf } = manifest.source;
+  return from ? Math.max(asOf - from, 0) : -1;
+}
+
+/** Screening filters; `rim` selects the roof-rim features instead of the parcels themselves. */
+export function filterExpr(f: Filters, part: 'body' | 'rim' = 'body', unsoldHold = -1): FilterSpecification {
+  const all: unknown[] = ['all', part === 'rim' ? IS_RIM : NOT_RIM];
   if (f.counties.length) all.push(['in', ['get', 'co'], ['literal', f.counties]]);
   if (f.classes.length) all.push(['in', ['get', 'cls'], ['literal', f.classes]]);
-  if (f.minHold > 0) all.push(['>=', num('hold', -1), f.minHold]);
+  if (f.minHold > 0) all.push(['>=', num('hold', unsoldHold), f.minHold]);
   const lotAc = LOT_STEPS_AC[f.lotStep] ?? 0;
   if (lotAc > 0) all.push(['>=', num('lot', 0), lotAc * 43560]);
   const btl = BTL_STEPS[f.btlStep] ?? Infinity;
@@ -128,26 +213,57 @@ export function filterExpr(f: Filters): FilterSpecification {
 
 const fade = (from: number, to: number, value: number): Expr => ['interpolate', ['linear'], ['zoom'], from, 0, to, value];
 
+/** Flat fills stay translucent so outlines and (in hybrid) the imagery read through. */
+export function fillOpacity(s: AppState, polyMin: number): Expr {
+  const op = s.basemap === 'hybrid' ? (s.shade === 'class' ? 0.24 : 0.5) : s.shade === 'class' ? 0.46 : 0.9;
+  return fade(polyMin, polyMin + 0.6, op);
+}
+
+export function extrusionOpacity(s: AppState, polyMin: number): Expr {
+  return fade(polyMin, polyMin + 0.6, s.basemap === 'hybrid' ? 0.74 : 0.9);
+}
+
+export function rimOpacity(s: AppState, rimMin: number): Expr {
+  return fade(rimMin, rimMin + 0.4, s.basemap === 'hybrid' ? 0.9 : 0.95);
+}
+
+/** Filter for a parcel layer id (the rim layer gets the rim variant). */
+export function layerFilter(id: string, f: Filters, manifest: Manifest): FilterSpecification {
+  return filterExpr(f, id === L_RIM ? 'rim' : 'body', holdFloor(manifest));
+}
+
+/** "4901" over "151K SF": house number + building size from the centroid layer. */
+const SF: Expr = num('sf', 0);
+const sfLabel: Expr = [
+  'case',
+  ['>=', SF, 1e6], ['concat', ['to-string', ['/', ['round', ['/', SF, 1e5]], 10]], 'M SF'],
+  ['>=', SF, 1e3], ['concat', ['to-string', ['round', ['/', SF, 1e3]]], 'K SF'],
+  ['>', SF, 0], ['concat', ['to-string', SF], ' SF'],
+  '',
+];
+
 export function parcelLayers(manifest: Manifest, s: AppState, vector: boolean): LayerSpecification[] {
   const polyMin = manifest.tiles.polygons.minzoom;
   const poly = vector ? { source: SRC_POLY, 'source-layer': manifest.tiles.polygons.layer } : { source: SRC_POLY };
   const pts = vector ? { source: SRC_PTS, 'source-layer': manifest.tiles.points.layer } : { source: SRC_PTS };
-  const filter = filterExpr(s.filters);
+  const filter = layerFilter(L_FLAT, s.filters, manifest);
   const flat = s.extrude === 'flat';
   const color = colorExpr(manifest, s);
+  const rimMin = manifest.tiles.polygons.rim_minzoom;
+  const rim = rimHeights(s.extrude);
   const layers: Record<string, unknown>[] = [
     {
       id: L_FLAT, type: 'fill', ...poly, minzoom: polyMin, filter,
       layout: { visibility: flat ? 'visible' : 'none' },
-      paint: { 'fill-color': color, 'fill-opacity': fade(polyMin, polyMin + 0.6, 0.92) },
+      paint: { 'fill-color': color, 'fill-opacity': fillOpacity(s, polyMin) },
     },
     {
-      id: L_OUTLINE, type: 'line', ...poly, minzoom: 13, filter,
+      id: L_OUTLINE, type: 'line', ...poly, minzoom: polyMin, filter,
       layout: { 'line-join': 'round' },
       paint: {
         'line-color': outlineColor(s),
         'line-width': outlineWidth(s),
-        'line-opacity': fade(13, 13.8, 1),
+        'line-opacity': fade(polyMin, polyMin + 0.6, 1),
       },
     },
     {
@@ -157,8 +273,19 @@ export function parcelLayers(manifest: Manifest, s: AppState, vector: boolean): 
         'fill-extrusion-color': color,
         'fill-extrusion-height': heightExpr(s.extrude),
         'fill-extrusion-base': 0,
-        'fill-extrusion-opacity': fade(polyMin, polyMin + 0.6, 0.9),
+        'fill-extrusion-opacity': extrusionOpacity(s, polyMin),
         'fill-extrusion-vertical-gradient': true,
+      },
+    },
+    {
+      id: L_RIM, type: 'fill-extrusion', ...poly, minzoom: rimMin ?? 24, filter: layerFilter(L_RIM, s.filters, manifest),
+      layout: { visibility: flat || rimMin == null ? 'none' : 'visible' },
+      paint: {
+        'fill-extrusion-color': rimColor(s),
+        'fill-extrusion-base': rim.base,
+        'fill-extrusion-height': rim.top,
+        'fill-extrusion-opacity': rimOpacity(s, rimMin ?? 24),
+        'fill-extrusion-vertical-gradient': false,
       },
     },
     {
@@ -171,6 +298,29 @@ export function parcelLayers(manifest: Manifest, s: AppState, vector: boolean): 
         'circle-opacity': ['interpolate', ['linear'], ['zoom'], polyMin + 0.2, 0.95, polyMin + 1, 0],
         'circle-stroke-opacity': ['interpolate', ['linear'], ['zoom'], polyMin + 0.2, 1, polyMin + 1, 0],
         'circle-pitch-alignment': 'map',
+      },
+    },
+    {
+      id: L_LABELS, type: 'symbol', ...pts, minzoom: LABEL_MIN_ZOOM, filter,
+      layout: {
+        'text-field': [
+          'format',
+          ['coalesce', ['get', 'hn'], ''], { 'text-font': ['literal', ['Noto Sans Bold']] },
+          ['case', ['all', ['has', 'hn'], ['>', SF, 0]], '\n', ''], {},
+          sfLabel, { 'font-scale': 0.82, 'text-font': ['literal', ['Noto Sans Regular']] },
+        ],
+        'text-font': ['Noto Sans Regular'],
+        'text-size': ['interpolate', ['linear'], ['zoom'], LABEL_MIN_ZOOM, 10.5, 18, 13],
+        'text-max-width': 8,
+        'text-padding': 3,
+        'text-letter-spacing': 0.04,
+        'symbol-sort-key': ['-', 0, num('jv', 0)],
+      },
+      paint: {
+        'text-color': '#ffffff',
+        'text-halo-color': 'rgba(0,0,0,0.88)',
+        'text-halo-width': 1.4,
+        'text-opacity': fade(LABEL_MIN_ZOOM, LABEL_MIN_ZOOM + 0.4, 1),
       },
     },
   ];

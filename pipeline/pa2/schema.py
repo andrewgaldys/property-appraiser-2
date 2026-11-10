@@ -10,7 +10,11 @@ from __future__ import annotations
 from .config import AS_OF_YEAR, COUNTIES
 from .dor_codes import ASSET_CLASSES, classify, describe, normalize_use_code
 from .entity import format_mailing_address
-from .util import clean_str, round_or_none, zip5
+from .util import clean_str, round_or_none, us_state_code, zip5
+
+# Placeholder site addresses the property appraisers use for parcels without one.
+_NO_ADDRESS = {"UNASSIGNED", "NO SITE ADDRESS", "NONE", "0", "N/A"}
+MIN_BUILDING_SQFT = 10  # smaller building areas are roll placeholders, treated as not reported
 
 # (name, SQL type, source / meaning). Used for docs, PostGIS DDL and validation.
 FIELDS: list[tuple[str, str, str]] = [
@@ -25,6 +29,7 @@ FIELDS: list[tuple[str, str, str]] = [
     ("use_category", "text", "Multifamily | Commercial/Retail | Industrial | Vacant Land | Single Family | ..."),
     ("asset_class", "text", "MF10 | MF2_9 | COM | IND | VAC_COM | SFR | CONDO | ..."),
     ("just_value", "bigint", "JV (just / market value)"),
+    ("assessed_value", "bigint", "AV_NSD (assessed value for non-school levies, after caps)"),
     ("land_value", "bigint", "LND_VAL"),
     ("building_value", "bigint", "JV - LND_VAL (floored at 0)"),
     ("land_to_value_ratio", "real", "LND_VAL / JV"),
@@ -84,8 +89,11 @@ def finalize_record(r: dict, as_of_year: int = AS_OF_YEAR) -> dict:
     r["use_category"] = ASSET_CLASSES[r["asset_class"]][1]
 
     for k in ("site_address", "site_city", "owner_name", "owner_addr1", "owner_addr2", "owner_city",
-              "owner_state", "legal_desc"):
+              "legal_desc"):
         r[k] = clean_str(r.get(k))
+    if r["site_address"].upper() in _NO_ADDRESS:
+        r["site_address"] = ""
+    r["owner_state"] = us_state_code(r.get("owner_state"))
     r["site_zip"] = zip5(r.get("site_zip"))
     r["owner_zip"] = zip5(r.get("owner_zip"))
     r["owner_addr"] = format_mailing_address(
@@ -107,7 +115,7 @@ def finalize_record(r: dict, as_of_year: int = AS_OF_YEAR) -> dict:
     r["last_sale_qual_cd"] = clean_str(r.get("last_sale_qual_cd")) or None
     r["last_sale_qualified"] = qualified_from_code(r["last_sale_qual_cd"])
 
-    for k in ("just_value", "land_value", "tot_lvg_area", "lnd_sqfoot", "no_res_unts", "no_buldng",
+    for k in ("just_value", "assessed_value", "land_value", "tot_lvg_area", "lnd_sqfoot", "no_res_unts", "no_buldng",
               "act_yr_blt", "eff_yr_blt", "last_sale_price", "last_sale_year", "last_sale_month", "tax_roll_year"):
         v = r.get(k)
         r[k] = int(v) if v is not None else None
@@ -115,4 +123,8 @@ def finalize_record(r: dict, as_of_year: int = AS_OF_YEAR) -> dict:
     for k in ("act_yr_blt", "eff_yr_blt"):
         if r[k] is not None and r[k] < 1800:
             r[k] = None
+    # The 2026 roll carries TOT_LVG_AR = 1 on ~7k improved office / warehouse / retail parcels
+    # (buildings and year built present): a placeholder for "area not reported", not one square foot.
+    if r["tot_lvg_area"] is not None and r["tot_lvg_area"] < MIN_BUILDING_SQFT:
+        r["tot_lvg_area"] = None
     return r

@@ -1,8 +1,18 @@
-import { CLASS_BADGE, CLASS_SHORT, COUNTY_META } from '../config';
+import { CLASS_BADGE, CLASS_COLORS, CLASS_FALLBACK, CLASS_SHORT, COUNTY_META } from '../config';
 import { clear, h, icon, type Child } from '../dom';
 import { int, money, moneyFull, parcelId, pct, saleDate, titleCase } from '../format';
 import type { Manifest, ParcelRecord, Portfolio, PortfolioItem, TileProps } from '../types';
+import type { AerialCard } from './aerial';
 import { holdCaption, holdTier, physicalFacts, portfolioSummary, saleFacts, signals, type Fact } from './facts';
+
+/** Asset-class badge: the class color carries identity, the label repeats it in text. */
+const classBadge = (cls: string) =>
+  h(
+    'span',
+    { class: 'badge class-badge' },
+    h('i', { style: { background: CLASS_COLORS[cls] ?? CLASS_FALLBACK } }),
+    CLASS_BADGE[cls] ?? cls,
+  );
 
 export interface DrawerHandlers {
   onClose(): void;
@@ -63,17 +73,24 @@ export class Drawer {
     root: HTMLElement,
     private manifest: Manifest,
     private handlers: DrawerHandlers,
+    private aerial: AerialCard,
   ) {
     this.el = root;
     this.body = h('div', { class: 'dr-body' });
-    this.scroller = h('div', { class: 'dr-scroll' }, this.body);
+    // The aerial card sits at the very top and is not rebuilt on each render (its map persists).
+    this.scroller = h('div', { class: 'dr-scroll' }, aerial.el, this.body);
     this.foot = h(
       'footer',
       { class: 'dr-foot' },
       h('button', { type: 'button', class: 'btn solid', onclick: () => this.handlers.onExport() }, icon('print'), 'Export property brief'),
       h('button', { type: 'button', class: 'btn ghost', title: 'Copy a link to this parcel', onclick: () => this.handlers.onCopyLink() }, icon('link'), 'Copy link'),
     );
-    root.append(this.scroller, this.foot);
+    const close = h(
+      'button',
+      { type: 'button', class: 'icon-btn dr-close', 'aria-label': 'Close property panel', onclick: () => this.handlers.onClose() },
+      icon('close', 16),
+    );
+    root.append(close, this.scroller, this.foot);
   }
 
   get isOpen(): boolean {
@@ -92,10 +109,6 @@ export class Drawer {
     document.body.classList.remove('drawer-open');
   }
 
-  private closeBtn(): HTMLElement {
-    return h('button', { type: 'button', class: 'icon-btn dr-close', 'aria-label': 'Close property panel', onclick: () => this.handlers.onClose() }, icon('close', 16));
-  }
-
   showLoading(hint?: TileProps): void {
     clear(this.body);
     this.foot.hidden = true;
@@ -107,8 +120,7 @@ export class Drawer {
           'div',
           { class: 'dr-badges' },
           hint ? h('span', { class: 'badge' }, COUNTY_META[hint.co]?.badge ?? String(hint.co)) : null,
-          hint ? h('span', { class: 'badge solid' }, CLASS_BADGE[hint.cls] ?? hint.cls) : null,
-          this.closeBtn(),
+          hint ? classBadge(hint.cls) : null,
         ),
         h('h2', { class: 'dr-addr' }, hint?.addr || 'Loading parcel…'),
         h('div', { class: 'dr-city skeleton' }, ' '),
@@ -121,7 +133,8 @@ export class Drawer {
   showError(message: string): void {
     clear(this.body);
     this.foot.hidden = true;
-    this.body.append(h('header', { class: 'dr-head' }, h('div', { class: 'dr-badges' }, this.closeBtn())), h('p', { class: 'dr-error' }, message));
+    this.aerial.hide();
+    this.body.append(h('p', { class: 'dr-error' }, message));
     this.open();
   }
 
@@ -133,6 +146,7 @@ export class Drawer {
     const county = COUNTY_META[r.county_code];
     const sig = signals(r);
     const tier = holdTier(r.hold_period_years);
+    this.aerial.show(r.parcel_id, r.bbox);
 
     // ---- Header ------------------------------------------------------------
     this.body.append(
@@ -143,8 +157,7 @@ export class Drawer {
           'div',
           { class: 'dr-badges' },
           h('span', { class: 'badge' }, county?.badge ?? String(r.county_code)),
-          h('span', { class: 'badge solid' }, CLASS_BADGE[r.asset_class] ?? r.asset_class),
-          this.closeBtn(),
+          classBadge(r.asset_class),
         ),
         h('h2', { class: 'dr-addr' }, r.site_address || 'No site address'),
         h('div', { class: 'dr-city' }, [titleCase(r.site_city), r.site_zip ? `FL ${r.site_zip}` : 'FL'].filter(Boolean).join(', ')),
@@ -179,6 +192,9 @@ export class Drawer {
           { class: 'jv' },
           h('div', { class: 'k' }, 'Just (market) value', r.tax_roll_year ? ` · ${r.tax_roll_year} roll` : ''),
           h('div', { class: 'jv-v mono' }, moneyFull(r.just_value)),
+          r.assessed_value != null
+            ? h('div', { class: 'av' }, h('span', { class: 'k' }, 'Assessed (non-school)'), h('span', { class: 'mono' }, moneyFull(r.assessed_value)))
+            : null,
         ),
         splitBar(r),
         factGrid(physicalFacts(r)),
@@ -201,12 +217,12 @@ export class Drawer {
           ),
           h(
             'div',
-            { class: `hold hold-${tier}`, title: holdCaption(r) },
+            { class: `hold hold-${tier}`, title: holdCaption(r, this.manifest.source.sales_from) },
             h('div', { class: 'hold-n mono' }, r.hold_period_years ?? '—'),
             h('div', { class: 'hold-u' }, 'yr hold'),
           ),
         ),
-        h('p', { class: 'cap' }, holdCaption(r), r.hold_period_years != null ? ` · hold = ${this.manifest.source.as_of_year} − ${r.last_sale_year}` : ''),
+        h('p', { class: 'cap' }, holdCaption(r, this.manifest.source.sales_from), r.hold_period_years != null ? ` · hold = ${this.manifest.source.as_of_year} − ${r.last_sale_year}` : ''),
         factGrid(saleFacts(r)),
       ),
     );
@@ -271,7 +287,11 @@ export class Drawer {
               title: current ? 'Selected parcel' : 'Fly to this parcel',
               onclick: () => this.handlers.onSelectItem(it),
             },
-            h('span', { class: 'pf-co' }, COUNTY_META[it.county_code]?.short ?? it.county_code),
+            h(
+              'span',
+              { class: 'pf-co', style: { borderLeftColor: CLASS_COLORS[it.asset_class] ?? CLASS_FALLBACK } },
+              COUNTY_META[it.county_code]?.short ?? it.county_code,
+            ),
             h(
               'span',
               { class: 'pf-main' },

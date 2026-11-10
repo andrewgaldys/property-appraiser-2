@@ -23,7 +23,7 @@ export class Brief {
     return !this.root.hidden;
   }
 
-  open(r: ParcelRecord, portfolio: Portfolio | null, image: string | null, manifest: Manifest): void {
+  open(r: ParcelRecord, portfolio: Portfolio | null, image: string | null, manifest: Manifest, aerial: string | null = null): void {
     clear(this.root);
     const county = COUNTY_META[r.county_code];
     const jv = r.just_value ?? 0;
@@ -65,16 +65,22 @@ export class Brief {
           'figure',
           { class: 'bp-map' },
           image ? h('img', { src: image, alt: `3D map view of ${r.site_address}` }) : h('div', { class: 'bp-noimg' }, 'Map snapshot unavailable'),
-          h('figcaption', null, 'Selected parcel in white, same-owner parcels in light grey. Basemap © OpenFreeMap, OpenMapTiles, OpenStreetMap contributors.'),
+          h('figcaption', null, '3D view, selected parcel in white. Basemap © OpenFreeMap, OpenMapTiles, OpenStreetMap contributors.'),
         ),
         h(
-          'div',
-          { class: 'bp-keys' },
-          h('div', { class: 'bp-key' }, h('span', null, 'Just value'), h('b', null, moneyFull(r.just_value))),
-          h('div', { class: 'bp-key' }, h('span', null, 'Land / improvements'), h('b', null, `${pct(landShare)} / ${pct(jv > 0 ? 1 - landShare : 0)}`)),
-          h('div', { class: 'bp-key' }, h('span', null, 'Last sale'), h('b', null, moneyFull(r.last_sale_price)), h('small', null, saleDate(r.last_sale_year, r.last_sale_month))),
-          h('div', { class: 'bp-key' }, h('span', null, 'Hold period'), h('b', null, r.hold_period_years != null ? `${r.hold_period_years} yrs` : '—'), h('small', null, holdCaption(r))),
+          'figure',
+          { class: 'bp-map' },
+          aerial ? h('img', { src: aerial, alt: `Aerial view of ${r.site_address}` }) : h('div', { class: 'bp-noimg' }, 'Aerial unavailable'),
+          h('figcaption', null, 'Aerial, parcel boundary in white. Imagery © Esri, Maxar, Earthstar Geographics.'),
         ),
+      ),
+      h(
+        'section',
+        { class: 'bp-keys' },
+        h('div', { class: 'bp-key' }, h('span', null, 'Just value'), h('b', null, moneyFull(r.just_value))),
+        h('div', { class: 'bp-key' }, h('span', null, 'Land / improvements'), h('b', null, `${pct(landShare)} / ${pct(jv > 0 ? 1 - landShare : 0)}`)),
+        h('div', { class: 'bp-key' }, h('span', null, 'Last sale'), h('b', null, moneyFull(r.last_sale_price)), h('small', null, saleDate(r.last_sale_year, r.last_sale_month))),
+        h('div', { class: 'bp-key' }, h('span', null, 'Hold period'), h('b', null, r.hold_period_years != null ? `${r.hold_period_years} yrs` : '—'), h('small', null, holdCaption(r, manifest.source.sales_from))),
       ),
       h(
         'section',
@@ -85,6 +91,7 @@ export class Brief {
           h('h2', null, 'Valuation & physicals'),
           rows([
             { k: 'Just value', v: moneyFull(r.just_value) },
+            ...(r.assessed_value != null ? [{ k: 'Assessed value (non-school)', v: moneyFull(r.assessed_value) }] : []),
             { k: 'Land value', v: moneyFull(r.land_value) },
             { k: 'Improvement value', v: moneyFull(r.building_value) },
             ...physicalFacts(r),

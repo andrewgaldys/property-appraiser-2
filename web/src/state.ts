@@ -37,7 +37,9 @@ export function loadSavedView(): Partial<AppState> {
     const out: Partial<AppState> = {};
     if (v.filters && typeof v.filters === 'object') out.filters = { ...DEFAULT_FILTERS, ...v.filters };
     if (v.extrude && ['flat', 'value', 'sqft', 'hold'].includes(v.extrude)) out.extrude = v.extrude;
-    if (v.shade && ['value', 'sqft', 'hold', 'ltv'].includes(v.shade)) out.shade = v.shade;
+    if (v.shade && ['class', 'value', 'sqft', 'hold', 'ltv'].includes(v.shade)) out.shade = v.shade;
+    if (v.basemap && ['dark', 'hybrid', 'split'].includes(v.basemap)) out.basemap = v.basemap;
+    if (typeof v.lens === 'boolean') out.lens = v.lens;
     return out;
   } catch {
     return {};
@@ -46,7 +48,10 @@ export function loadSavedView(): Partial<AppState> {
 
 export function saveView(s: AppState): void {
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ filters: s.filters, extrude: s.extrude, shade: s.shade }));
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ filters: s.filters, extrude: s.extrude, shade: s.shade, basemap: s.basemap, lens: s.lens }),
+    );
   } catch {
     /* storage unavailable (private mode, blocked): ignore */
   }

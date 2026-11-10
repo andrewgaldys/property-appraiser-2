@@ -10,12 +10,12 @@
 .bp-badges span { border: 1px solid #111; padding: 1px 6px; font-size: 9px; letter-spacing: .1em; text-transform: uppercase; }
 .bp-title h1 { margin: 0; font-size: 22px; letter-spacing: .01em; }
 .bp-sub, .bp-legal { color: #444; }
-.bp-hero { display: grid; grid-template-columns: 1.55fr 1fr; gap: 14px; padding: 12px 0; border-bottom: 1px solid #ccc; }
+.bp-hero { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 12px 0 8px; }
 .bp-map { margin: 0; }
 .bp-map img, .bp-noimg { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: cover; background: #0a0a0a; color: #888; }
 .bp-noimg { display: grid; place-items: center; }
 .bp-map figcaption { font-size: 8.5px; color: #666; margin-top: 4px; }
-.bp-keys { display: grid; gap: 8px; align-content: start; }
+.bp-keys { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; padding: 0 0 10px; border-bottom: 1px solid #ccc; }
 .bp-key { border-left: 2px solid #111; padding-left: 8px; }
 .bp-key span { display: block; font-size: 8.5px; letter-spacing: .12em; text-transform: uppercase; color: #555; }
 .bp-key b { font: 500 16px var(--mono); }

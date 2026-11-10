@@ -12,10 +12,12 @@ import { h, icon, toast } from './dom';
 import { MapController } from './map/controller';
 import { Store, loadSavedView, saveView } from './state';
 import type { AppState, Bbox, Manifest, ParcelRecord, Portfolio, PortfolioItem, TileProps } from './types';
+import { AerialCard } from './ui/aerial';
 import { Brief } from './ui/brief';
 import { Drawer } from './ui/drawer';
 import { FilterPanel } from './ui/filters';
 import { Legend } from './ui/legend';
+import { Toolbar } from './ui/toolbar';
 import { Tooltip } from './ui/tooltip';
 
 // ---- URL hash: MapLibre owns `map=`, we own `p=` (selected parcel) ----------------
@@ -66,18 +68,24 @@ async function boot(): Promise<void> {
   const store = new Store<AppState>({
     filters: { ...DEFAULT_FILTERS },
     extrude: 'value',
-    shade: 'value',
+    shade: 'class',
+    basemap: 'dark',
+    lens: true,
     selection: null,
     focus: false,
     ...loadSavedView(),
   });
   store.subscribe((s, prev) => {
-    if (s.filters !== prev.filters || s.extrude !== prev.extrude || s.shade !== prev.shade) saveView(s);
+    if (
+      s.filters !== prev.filters || s.extrude !== prev.extrude || s.shade !== prev.shade ||
+      s.basemap !== prev.basemap || s.lens !== prev.lens
+    ) saveView(s);
   });
 
   const mapEl = document.getElementById('map')!;
-  const tooltip = new Tooltip();
+  const tooltip = new Tooltip(manifest, (pid) => data.parcel(pid));
   const brief = new Brief();
+  const aerial = new AerialCard(manifest, data);
   let current: { rec: ParcelRecord; portfolio: Portfolio | null } | null = null;
   let token = 0;
 
@@ -93,7 +101,7 @@ async function boot(): Promise<void> {
         () => toast('Copy failed: use the address bar'),
       );
     },
-  });
+  }, aerial);
 
   const mapc: MapController = new MapController(
     mapEl,
@@ -122,6 +130,7 @@ async function boot(): Promise<void> {
     onMarket: (b: Bbox) => mapc.fitBbox(b, { maxZoom: 15.3, pitch: store.get().extrude === 'flat' ? 0 : 55 }),
   });
   new Legend(mapEl, manifest, store);
+  new Toolbar(mapEl, store);
   if (import.meta.env.DEV) {
     // Dev-only handle for console debugging (stripped from production builds).
     (window as unknown as Record<string, unknown>).__pa2 = { map: mapc.map, store, data };
@@ -210,7 +219,8 @@ async function boot(): Promise<void> {
     mapc.flyToParcel(rec);
     await moved;
     const image = await mapc.captureParcel(rec);
-    brief.open(rec, portfolio, image, manifest);
+    const aerialImage = await aerial.snapshot();
+    brief.open(rec, portfolio, image, manifest, aerialImage);
   }
 
   // A parcel link pasted into an already-open tab only changes the hash: follow it.
