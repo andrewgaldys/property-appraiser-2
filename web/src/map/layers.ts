@@ -327,8 +327,8 @@ export function parcelLayers(manifest: Manifest, s: AppState, vector: boolean): 
         'symbol-sort-key': ['-', 0, num('jv', 0)],
       },
       paint: {
-        'text-color': '#eef1f4',
-        'text-halo-color': 'rgba(14,17,21,0.9)',
+        'text-color': '#ffffff',
+        'text-halo-color': 'rgba(0,0,0,0.88)',
         'text-halo-width': 1.4,
         'text-opacity': fade(LABEL_MIN_ZOOM, LABEL_MIN_ZOOM + 0.4, 1),
       },

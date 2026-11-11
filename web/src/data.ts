@@ -83,6 +83,12 @@ export class DataStore {
     return this.cached(this.owners, shard, () => this.json<OwnerShard>(url.replace('{shard}', shard)));
   }
 
+  /** One owner-name ('n') or mailing-address ('a') group from the owner index. */
+  async ownerGroup(kind: 'n' | 'a', key: number): Promise<PortfolioGroup | null> {
+    const shard = await this.ownerShard(key);
+    return shard[kind][String(key)] ?? null;
+  }
+
   /** Union of every parcel sharing the owner-name key and/or the mailing-address key. */
   async portfolio(nameKey: number | null, addrKey: number | null): Promise<Portfolio | null> {
     if (nameKey == null && addrKey == null) return null;

@@ -16,7 +16,7 @@ import { Protocol } from 'pmtiles';
 import { LENS_RADIUS, SATELLITE_ATTRIBUTION } from '../config';
 import type { DataStore } from '../data';
 import type { Store } from '../state';
-import type { AppState, Bbox, Manifest, ParcelRecord, PortfolioItem, TileProps, ViewStats } from '../types';
+import type { AppState, Bbox, Manifest, OwnerRow, ParcelRecord, PortfolioItem, TileProps, ViewStats } from '../types';
 import type { Tooltip } from '../ui/tooltip';
 import { BASEMAP_LABEL_ANCHOR, applyBasemap, buildBasemapStyle } from './basemap';
 import {
@@ -100,6 +100,13 @@ export class MapController {
       new AttributionControl({ compact: true, customAttribution: [manifest.source.attribution, SATELLITE_ATTRIBUTION] }),
       'bottom-right',
     );
+    // Compact attribution opens expanded until the first drag. On a phone that is a tall column over
+    // the map, so it starts collapsed there; its ⓘ button still opens it.
+    if (window.matchMedia('(max-width: 720px)').matches) {
+      this.map.once('idle', () => {
+        container.querySelector('.maplibregl-ctrl-attrib.maplibregl-compact')?.classList.remove('maplibregl-compact-show');
+      });
+    }
     // 'style.load' fires as soon as the style JSON is parsed; 'load' would wait for every
     // basemap tile in view, which delays the parcels on slow connections.
     this.map.once('style.load', () => {
@@ -276,9 +283,11 @@ export class MapController {
     const feats = this.map.queryRenderedFeatures({ layers });
     // Nominal-value parcels ($100 common areas, sub-parcels) stay on the map but out of the totals,
     // unless the viewer includes them.
-    const include = this.store.get().filters.includeNominal;
+    const { filters, ownerGroup } = this.store.get();
+    const include = filters.includeNominal;
     const nominal = nominalMax(this.manifest);
     const seen = new Set<string>();
+    const owners = new Map<string, OwnerRow>();
     let jv = 0;
     let units = 0;
     let sf = 0;
@@ -294,8 +303,30 @@ export class MapController {
       jv += p.jv ?? 0;
       units += p.u ?? 0;
       sf += p.sf ?? 0;
+      // Owner groups: the portfolio keys in the tiles (multi-parcel owners), else the parcel itself.
+      const [kind, id] =
+        ownerGroup === 'addr' && p.oak != null ? (['a', p.oak] as const) : p.onk != null ? (['n', p.onk] as const) : (['p', p.pid] as const);
+      const key = `${kind}${id}`;
+      let g = owners.get(key);
+      if (!g) {
+        g = { key, kind, id, parcels: 0, jv: 0, units: 0, sf: 0, top: p, own: p.own };
+        owners.set(key, g);
+      }
+      g.parcels++;
+      g.jv += p.jv ?? 0;
+      g.units += p.u ?? 0;
+      g.sf += p.sf ?? 0;
+      if ((p.jv ?? 0) > (g.top.jv ?? 0)) {
+        g.top = p;
+        if (p.own) g.own = p.own;
+      }
+      if (!g.own && p.own) g.own = p.own;
     }
-    this.events.onStats({ parcels: seen.size - skipped, jv, units, sf, nominal: skipped });
+    const ranked = [...owners.values()].sort((a, b) => b.jv - a.jv || b.parcels - a.parcels);
+    this.events.onStats({
+      parcels: seen.size - skipped, jv, units, sf, nominal: skipped,
+      owners: ranked.slice(0, 10), ownerCount: owners.size,
+    });
   }
 
   // ---------------------------------------------------------------------------

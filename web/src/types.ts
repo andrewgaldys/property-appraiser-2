@@ -219,6 +219,8 @@ export interface Portfolio {
 }
 
 export type ExtrudeMode = 'flat' | 'value' | 'sqft' | 'hold';
+/** Top owners: group parcels by owner name, or by mailing address (reveals sponsors behind single-asset LLCs). */
+export type OwnerGrouping = 'name' | 'addr';
 /** "Color by": asset class (default) or a metric ramp. */
 export type ShadeMode = 'class' | 'value' | 'sqft' | 'hold' | 'ltv';
 export type BasemapMode = 'dark' | 'hybrid' | 'split';
@@ -248,6 +250,23 @@ export interface AppState {
   lens: boolean;
   selection: Selection | null;
   focus: boolean;
+  ownerGroup: OwnerGrouping;
+}
+
+/** One owner group among the parcels in view (see MapController.computeStats). */
+export interface OwnerRow {
+  /** n<name key> | a<address key> | p<parcel id> (an owner with one parcel in the dataset). */
+  key: string;
+  kind: 'n' | 'a' | 'p';
+  id: number | string;
+  parcels: number;
+  jv: number;
+  units: number;
+  sf: number;
+  /** The group's most valuable parcel in view: what a click opens. */
+  top: TileProps;
+  /** Owner name from the tiles when they carry it (polygon zooms). */
+  own?: string;
 }
 
 export interface ViewStats {
@@ -257,4 +276,7 @@ export interface ViewStats {
   sf: number;
   /** Nominal-value parcels in view that the totals leave out. */
   nominal: number;
+  /** Largest owner groups in view by assessed value (top 10), and how many groups there are. */
+  owners: OwnerRow[];
+  ownerCount: number;
 }

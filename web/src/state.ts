@@ -44,6 +44,7 @@ export function loadSavedView(): Partial<AppState> {
     if (v.shade && ['class', 'value', 'sqft', 'hold', 'ltv'].includes(v.shade)) out.shade = v.shade;
     if (v.basemap && ['dark', 'hybrid', 'split'].includes(v.basemap)) out.basemap = v.basemap;
     if (typeof v.lens === 'boolean') out.lens = v.lens;
+    if (v.ownerGroup === 'name' || v.ownerGroup === 'addr') out.ownerGroup = v.ownerGroup;
     return out;
   } catch {
     return {};
@@ -74,7 +75,7 @@ export function saveView(s: AppState): void {
   try {
     window.localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ filters: s.filters, extrude: s.extrude, shade: s.shade, basemap: s.basemap, lens: s.lens }),
+      JSON.stringify({ filters: s.filters, extrude: s.extrude, shade: s.shade, basemap: s.basemap, lens: s.lens, ownerGroup: s.ownerGroup }),
     );
   } catch {
     /* storage unavailable (private mode, blocked): ignore */

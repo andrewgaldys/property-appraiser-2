@@ -19,6 +19,7 @@ import { Drawer } from './ui/drawer';
 import { FilterPanel, type SectionId } from './ui/filters';
 import { FirstVisitHint } from './ui/hint';
 import { Legend } from './ui/legend';
+import { OwnersPanel } from './ui/owners';
 import { Toolbar } from './ui/toolbar';
 import { Tooltip } from './ui/tooltip';
 
@@ -75,12 +76,13 @@ async function boot(): Promise<void> {
     lens: true,
     selection: null,
     focus: false,
+    ownerGroup: 'name',
     ...loadSavedView(),
   });
   store.subscribe((s, prev) => {
     if (
       s.filters !== prev.filters || s.extrude !== prev.extrude || s.shade !== prev.shade ||
-      s.basemap !== prev.basemap || s.lens !== prev.lens
+      s.basemap !== prev.basemap || s.lens !== prev.lens || s.ownerGroup !== prev.ownerGroup
     ) saveView(s);
   });
 
@@ -118,7 +120,10 @@ async function boot(): Promise<void> {
       },
       onSelect: (props: TileProps) => void select(props.pid, { hint: props }),
       onClear: () => clearSelection(),
-      onStats: (s) => panel.setStats(s),
+      onStats: (s) => {
+        panel.setStats(s);
+        owners.setStats(s);
+      },
     },
     tooltip,
   );
@@ -134,6 +139,14 @@ async function boot(): Promise<void> {
       mapc.fitBbox(b, { maxZoom: 15.3, pitch: store.get().extrude === 'flat' ? 0 : 55 });
     },
   });
+  // Top owners in view: sits right under the In-view totals it shares a computation with.
+  const owners = new OwnersPanel(manifest, data, store, {
+    onPick: (row) => {
+      if (window.matchMedia('(max-width: 900px)').matches) setPanelOpen(false);
+      void select(row.top.pid, { hint: row.top, focus: true });
+    },
+  });
+  document.querySelector('#filters .inview')?.after(owners.el);
   new Legend(mapEl, manifest, store);
 
   // Map overlay, top-left: [Filters (narrow screens)] [basemap + lens], then the applied-filter chips.
@@ -186,7 +199,8 @@ async function boot(): Promise<void> {
     return window.matchMedia('(max-width: 720px)').matches ? 0 : drawer.el.getBoundingClientRect().width;
   }
 
-  async function select(pid: string, opts: { fly?: boolean; hint?: TileProps; keepFocus?: boolean } = {}): Promise<void> {
+  /** focus: spotlight the parcel's portfolio right away (top-owner picks). */
+  async function select(pid: string, opts: { fly?: boolean; hint?: TileProps; keepFocus?: boolean; focus?: boolean } = {}): Promise<void> {
     const my = ++token;
     const prev = store.get();
     const hint = opts.hint;
@@ -197,7 +211,7 @@ async function boot(): Promise<void> {
       ((hint.onk != null && hint.onk === prev.selection.nameKey) || (hint.oak != null && hint.oak === prev.selection.addrKey));
     store.set({
       selection: { pid, nameKey: hint?.onk ?? null, addrKey: hint?.oak ?? null },
-      focus: prev.focus && (opts.keepFocus || samePortfolio),
+      focus: opts.focus ?? (prev.focus && (opts.keepFocus || samePortfolio)),
     });
     drawer.showLoading(hint);
     mapc.setRightInset(drawerInset());

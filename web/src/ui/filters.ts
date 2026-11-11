@@ -135,7 +135,9 @@ export class FilterPanel {
     el.open = this.ui.sections[id];
     el.addEventListener('toggle', () => {
       this.ui.sections[id] = el.open;
-      saveUi({ sections: this.ui.sections });
+      // Read-modify-write: other panels (Top owners) keep their own open state in the same record.
+      const stored = loadUi({ sections: {} as Record<string, boolean> }).sections;
+      saveUi({ sections: { ...stored, [id]: el.open } });
     });
     this.sections.set(id, { el, sum });
     return el;

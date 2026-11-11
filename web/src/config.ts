@@ -80,11 +80,12 @@ export const SHADE_MODES: { id: ShadeMode; label: string; legend: string }[] = [
 ];
 
 /**
- * Asset-class colors (fills, extrusions, outlines): muted for the slate map, and validated as a set
- * for a map, where any two classes can touch (dataviz validate_palette.js, dark mode, surface
- * #14181d, all pairs): worst protan/deutan ΔE 8.4, worst normal-vision ΔE 15.8, every color ≥ 3:1.
- * The old Tailwind-500 set put Industrial violet and Multifamily blue at ΔE 0.9 for deuteranopes.
- * Institutional is a light neutral (validated with the five); the opt-in residential classes stay quiet.
+ * Asset-class colors (fills, extrusions, outlines): the only hues on an otherwise black-and-white
+ * map, muted, and validated as a set for a map, where any two classes can touch (dataviz
+ * validate_palette.js, dark mode, surface #0b0b0b, all pairs): worst protan/deutan ΔE 8.4, worst
+ * normal-vision ΔE 15.8, every color ≥ 3:1. (The old Tailwind-500 set put Industrial violet and
+ * Multifamily blue at ΔE 0.9 for deuteranopes.) Institutional is a neutral light gray, separable from
+ * all five; the opt-in residential classes stay neutral too.
  */
 export const CLASS_COLORS: Record<string, string> = {
   MF10: '#4e63a9',
@@ -92,19 +93,19 @@ export const CLASS_COLORS: Record<string, string> = {
   COM: '#b88448',
   IND: '#ab3f6f',
   VAC_COM: '#2aa484',
-  INST: '#a9b0ba',
-  CONDO: '#c3c9d1',
-  RES_OTH: '#7f7a74',
-  SFR: '#a39e97',
-  VAC_RES: '#5f5b56',
+  INST: '#bdbdbd',
+  CONDO: '#d4d4d4',
+  RES_OTH: '#7a7a7a',
+  SFR: '#9e9e9e',
+  VAC_RES: '#5c5c5c',
   AG: '#6f8f45',
-  GOV: '#6b7380',
-  OTHER: '#6b7380',
+  GOV: '#6b6b6b',
+  OTHER: '#6b6b6b',
 };
-export const CLASS_FALLBACK = '#6b7380';
+export const CLASS_FALLBACK = '#6b6b6b';
 
 export const BASEMAP_MODES: { id: BasemapMode; label: string; title: string }[] = [
-  { id: 'dark', label: 'Map', title: 'Dark map' },
+  { id: 'dark', label: 'Map', title: 'Black-and-white map' },
   { id: 'hybrid', label: 'Hybrid', title: 'Satellite imagery with street labels and parcel outlines' },
   { id: 'split', label: 'Split', title: 'Map on the left, satellite on the right (drag the divider)' },
 ];
@@ -117,23 +118,23 @@ export const LENS_MIN_ZOOM = 14;
 export const LENS_RADIUS = 120;
 
 /** The map's ground color: shared by the basemap, fog and the class-color dimming. */
-export const MAP_GROUND = '#14181d';
+export const MAP_GROUND = '#0b0b0b';
 
 /**
- * Single-hue (slate) sequential ramps, lightness-monotonic, placed at the dataset's
- * 5th/25th/50th/75th/95th percentiles. On the dark surface "more" = lighter.
- * NORMAL leaves headroom below white, which is reserved for the selection.
+ * Single-hue (neutral) sequential ramps, lightness-monotonic, placed at the dataset's
+ * 5th/25th/50th/75th/95th percentiles. On the black surface "more" = lighter.
+ * NORMAL leaves headroom below pure white, which is reserved for the selection.
  */
-export const RAMP_NORMAL = ['#2a3039', '#3b434e', '#535d6a', '#717c8a', '#97a2b0'];
+export const RAMP_NORMAL = ['#262626', '#383838', '#4f4f4f', '#6b6b6b', '#8e8e8e'];
 /** While a parcel is selected: compress the ramp so the portfolio reads at a glance. */
-export const RAMP_SELECTED = ['#232931', '#2d343d', '#38404a', '#454e59', '#56606c'];
+export const RAMP_SELECTED = ['#222222', '#2f2f2f', '#3d3d3d', '#4e4e4e', '#626262'];
 /** Portfolio focus mode: everything outside the portfolio recedes into the ground. */
-export const RAMP_FOCUS = ['#1a1f25', '#1d2228', '#20262c', '#232930', '#272d34'];
-/** Low-zoom centroid dots: same ordering, lifted floor so small dots stay visible on the dark basemap. */
-export const RAMP_POINTS = ['#4a5360', '#646e7c', '#838e9c', '#a5afbc', '#cbd2db'];
+export const RAMP_FOCUS = ['#171717', '#1b1b1b', '#1f1f1f', '#232323', '#282828'];
+/** Low-zoom centroid dots: same ordering, lifted floor so small dots stay visible on the black basemap. */
+export const RAMP_POINTS = ['#4f4f4f', '#6c6c6c', '#8c8c8c', '#b0b0b0', '#d6d6d6'];
 export const COLOR_SELECTED = '#ffffff';
-export const COLOR_PORTFOLIO = '#e3e7ec';
-export const COLOR_HOVER = '#eef1f4';
+export const COLOR_PORTFOLIO = '#e4e4e4';
+export const COLOR_HOVER = '#f2f2f2';
 
 /** Extrusion height breakpoints (metres) - piecewise-linear approximation of a log scale. */
 export const HEIGHT_STOPS: Record<Exclude<ExtrudeMode, 'flat'>, number[]> = {

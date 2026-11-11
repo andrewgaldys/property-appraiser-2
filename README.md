@@ -9,7 +9,8 @@ A Python pipeline pulls the parcels from the Florida Statewide Cadastral layer (
 - Every parcel is outlined: class-colored strokes in 2D, and a light **roof rim** on each 3D block. House numbers and building SF label parcels from zoom 15.
 - Hover tooltip: assessed market value, site address, property type, owner, county, building SF, units (multifamily and mixed use only) and years held.
 - **Satellite**: a spyglass lens around the cursor (zoom 14+, toggle with `S`), a Map / Hybrid / Split basemap switch, and a live aerial of the selected parcel in the drawer.
-- **Sidebar** in collapsible sections (County, Markets, Asset class, Screens, Display) under the live **In view** totals. Screens: minimum years held, minimum lot size, maximum building-to-land value, and whether nominal-value parcels count. Explanations sit behind ⓘ buttons.
+- **Top owners in view**: who controls the parcels on screen, after filters, ranked by assessed value, with each owner's share and the top five's combined share (ownership concentration). Group by owner name, or by mailing address to see the sponsor behind single-asset LLCs. Click an owner to open their most valuable parcel and spotlight the portfolio.
+- **Sidebar** in collapsible sections (Top owners, County, Markets, Asset class, Screens, Display) under the live **In view** totals. Screens: minimum years held, minimum lot size, maximum building-to-land value, and whether nominal-value parcels count. Explanations sit behind ⓘ buttons.
 - **Applied filters** show as removable chips over the map, with *Reset all*. The legend collapses to a button (and steps aside on its own while the drawer needs the room). A one-time hint suggests where to start.
 - **Property drawer**, most decision-relevant first: address, asset class and use, then assessed market value, building SF, lot, residential units, last sale, years held and owner; then the aerial, value and building details, sale and hold, and the **true-owner portfolio** across all three counties (matched on normalized owner name *or* mailing address). Identifiers and legal text fold into *More details*; empty fields are left out.
 - One-click, print-styled **Property Brief** (Letter, Save as PDF) with a 3D view and an aerial, plus shareable parcel links (`#…&p=<parcel id>`).
@@ -200,22 +201,33 @@ The cadastral bundle (63 MB, largest file 24 MB) can be committed. The full roll
 | Retail & commercial (incl. office, hotels, mixed use) | `#b88448` amber | 011–039 |
 | Industrial | `#ab3f6f` berry | 041–049 |
 | Vacant commercial / industrial | `#2aa484` teal | 010, 040 |
-| Institutional | `#a9b0ba` light slate | 070–079 |
+| Institutional | `#bdbdbd` light gray | 070–079 |
 
-The palette is muted for the slate basemap and validated as a set for a map, where any two classes can touch (dataviz `validate_palette.js`, dark mode, surface `#14181d`, all pairs): worst protanope/deuteranope separation ΔE 8.4, worst normal-vision ΔE 15.8, every color at least 3:1 against the ground. The earlier Tailwind set failed this: Industrial violet and Multifamily blue were nearly identical (ΔE 0.9) for deuteranopes.
+The palette is muted for the black basemap and validated as a set for a map, where any two classes can touch (dataviz `validate_palette.js`, dark mode, surface `#0b0b0b`, all pairs): worst protanope/deuteranope separation ΔE 8.4, worst normal-vision ΔE 15.8, every color at least 3:1 against the ground. Institutional is a neutral gray, separable from all five. The earlier Tailwind set failed this: Industrial violet and Multifamily blue were nearly identical (ΔE 0.9) for deuteranopes.
 
 - **Outlines.** In 2D every parcel has a class-colored stroke: 1.5 px at zoom 14, 2.5 px at zoom 16, thinner further out. Hover, selection and same-owner portfolio parcels switch to white.
   MapLibre cannot raise a line layer to roof height, so in 3D each parcel gets a **roof rim** instead. The rim is a 2 m band inside the boundary (shipped in the z15 tiles as features flagged `e: 1`), extruded just above the block in a lighter tint of the class color.
 - **Labels** (zoom 15+): house number over building SF; where labels collide, higher-value parcels win.
 - **Tooltip**: assessed market value ("Nominal value" for nominal parcels), site address, subtype (e.g. "Multifamily 10+ units" or the DOR description, such as "Community Shopping Center"), owner, then county, SF, units and years held.
 - **Legend** (bottom-left, collapsible): class swatches with counts in "Asset class" mode; the metric ramp plus "Outline: asset class" in the other color modes.
-- **Interface**: charcoal-slate surfaces in a few steps (map ground `#14181d`, panels `#181c22`), off-white text (`#e4e7eb`) with muted grays that keep WCAG AA contrast, IBM Plex Sans in sentence case for words and IBM Plex Mono for numbers and IDs. Breakpoints: the sidebar slides in below 900 px, and the drawer becomes a bottom sheet below 720 px.
+- **Interface**: black and white. Near-black surfaces in a few steps (map ground `#0b0b0b`, panels `#0d0d0d`), white text and white active states, neutral grays that keep WCAG AA contrast; the asset-class colors are the only hues (plus amber for nominal-value warnings). IBM Plex Sans in sentence case for words, IBM Plex Mono for numbers and IDs. Breakpoints: the sidebar slides in below 900 px, and the drawer becomes a bottom sheet below 720 px.
+
+## Top owners in view
+
+The sidebar ranks the owners of the parcels currently on screen, after every filter, by assessed market value: each row shows the owner, parcel count, residential units, value and share of the value in view, with a bar scaled to the leader.
+The footer gives the top five owners' combined share, a quick read on ownership concentration. Pan, zoom or change a filter and the ranking follows (it is computed from the same rendered parcels as the In-view totals).
+
+- **By name** groups parcels whose normalized owner names match (`owner_name_key` in the tiles).
+- **By address** groups parcels mailed to the same normalized address (`owner_addr_key`), which often reveals the sponsor behind single-asset LLCs: downtown West Palm Beach puts CityPlace's four entities together (17 parcels, $390M). Rows note how many other owner names share the address, and flag addresses shared by 25+ names as a likely registered agent or manager.
+- Parcels with no portfolio key are their own row (an owner with one parcel). Nominal-value parcels follow the *Count nominal-value parcels* switch.
+- Owner names come from the parcel tiles at zoom 12+; further out they are looked up in the owner index and parcel records, and cached.
+- Clicking a row opens that owner's most valuable parcel in view and spotlights the portfolio on the map.
 
 ## Satellite imagery
 
 - **Spyglass lens.** Press `S` or use the top-bar *Satellite lens* button (hidden on touch screens, which have no hover). From zoom 14, a 120 px-radius circle around the cursor shows imagery with white parcel lines.
   It is a second, non-interactive map, camera-locked to the main one and clipped to the circle, so hover and click still reach the parcels. The tooltip moves out of its way.
-- **Basemap switch** (top-left): **Map** (dark slate), **Hybrid** (imagery + white street and place labels + class outlines over translucent fills), **Split** (dark left, imagery right; drag the divider or use the arrow keys).
+- **Basemap switch** (top-left): **Map** (black and white), **Hybrid** (imagery + white street and place labels + class outlines over translucent fills), **Split** (dark left, imagery right; drag the divider or use the arrow keys).
 - **Drawer aerial**: a live thumbnail fitted to the selected parcel (220 px, below the key facts), boundary in white. The brief prints it next to the 3D view.
 
 Imagery: Esri World Imagery tiles (`https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}`), keyless, credited on the map as "Imagery © Esri, Maxar, Earthstar Geographics, GIS User Community".
@@ -272,7 +284,7 @@ This creates `pa2_parcels` (indexed), the view `pa2_owner_portfolios` and the fu
 
 ## Notes and limits (V0.1)
 
-- Basemap: OpenFreeMap vector tiles (no key), restyled in charcoal-slate. Override with `VITE_BASEMAP_STYLE` (any MapLibre style URL).
+- Basemap: OpenFreeMap vector tiles (no key), restyled monochrome. Override with `VITE_BASEMAP_STYLE` (any MapLibre style URL).
 - Sale history: see *Sales history and hold periods*. Palm Beach's CAMA file keeps five transfers per parcel, so a parcel with five nominal transfers in a row keeps a minimum hold rather than its last priced sale.
 - Last-sale prices are as recorded: a deed covering several parcels may carry the whole package's price on each of them.
 - Condo units (004) and individual mobile homes (002) are excluded by default; see the opt-in flags.

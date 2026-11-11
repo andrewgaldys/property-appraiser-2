@@ -10,11 +10,11 @@ const HYBRID_HIDDEN = ['landcover', 'park', 'water', 'waterway', 'aeroway', 'roa
 type PaintSet = Record<string, Record<string, string | number>>;
 const LABEL_PAINT: Record<'dark' | 'hybrid', PaintSet> = {
   dark: {
-    'road-label': { 'text-color': '#7d8692', 'text-halo-color': '#14181d', 'text-halo-width': 1.4 },
-    'place-label': { 'text-color': '#b3bbc5', 'text-halo-color': '#14181d', 'text-halo-width': 1.6 },
-    'water-label-line': { 'text-color': '#56616e', 'text-halo-color': '#0e1318' },
-    'water-label-point': { 'text-color': '#56616e', 'text-halo-color': '#0e1318' },
-    'boundary-county': { 'line-color': '#606a76' },
+    'road-label': { 'text-color': '#6c6c6c', 'text-halo-color': '#0a0a0a', 'text-halo-width': 1.4 },
+    'place-label': { 'text-color': '#a4a4a4', 'text-halo-color': '#0a0a0a', 'text-halo-width': 1.6 },
+    'water-label-line': { 'text-color': '#3e3e3e', 'text-halo-color': '#030303' },
+    'water-label-point': { 'text-color': '#3e3e3e', 'text-halo-color': '#030303' },
+    'boundary-county': { 'line-color': '#5c5c5c' },
   },
   hybrid: {
     'road-label': { 'text-color': '#f4f4f4', 'text-halo-color': 'rgba(0,0,0,0.92)', 'text-halo-width': 1.7 },
@@ -41,8 +41,8 @@ export function applyBasemap(map: MapLibreMap, mode: BasemapMode): void {
 }
 
 /**
- * "Institutional slate" basemap: OpenFreeMap vector tiles (OpenMapTiles schema, no API key)
- * restyled in charcoal-slate greys (softer than black), with 3D building extrusions. Parcel layers are inserted
+ * "Institutional mono" basemap: OpenFreeMap vector tiles (OpenMapTiles schema, no API key)
+ * restyled in near-black greys, with 3D building extrusions. Parcel layers are inserted
  * just below `BASEMAP_LABEL_ANCHOR` so labels always stay on top.
  */
 export const BASEMAP_LABEL_ANCHOR = 'road-label';
@@ -56,7 +56,7 @@ const roadWidth = (base: number, top: number): ExpressionSpecification => [
 export function buildBasemapStyle(): StyleSpecification {
   return {
     version: 8,
-    name: 'PA2 Institutional Slate',
+    name: 'PA2 Institutional Mono',
     glyphs: 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',
     sources: {
       [SRC]: { type: 'vector', url: 'https://tiles.openfreemap.org/planet' },
@@ -70,16 +70,16 @@ export function buildBasemapStyle(): StyleSpecification {
     },
     light: { anchor: 'viewport', color: '#ffffff', intensity: 0.42, position: [1.25, 205, 35] },
     sky: {
-      'sky-color': '#14181d',
-      'horizon-color': '#1d232a',
-      'fog-color': '#14181d',
+      'sky-color': '#0a0a0a',
+      'horizon-color': '#161616',
+      'fog-color': '#0a0a0a',
       'sky-horizon-blend': 0.6,
       'horizon-fog-blend': 0.7,
       'fog-ground-blend': 0.75,
       'atmosphere-blend': 0,
     },
     layers: [
-      { id: 'background', type: 'background', paint: { 'background-color': '#14181d' } },
+      { id: 'background', type: 'background', paint: { 'background-color': '#0b0b0b' } },
       {
         id: SATELLITE_LAYER, type: 'raster', source: SATELLITE_LAYER,
         layout: { visibility: 'none' },
@@ -89,57 +89,57 @@ export function buildBasemapStyle(): StyleSpecification {
       {
         id: 'landcover', type: 'fill', source: SRC, 'source-layer': 'landcover',
         filter: ['in', ['get', 'class'], ['literal', ['wood', 'grass', 'wetland', 'farmland', 'sand']]],
-        paint: { 'fill-color': '#171c21', 'fill-opacity': 0.8 },
+        paint: { 'fill-color': '#0e0e0e', 'fill-opacity': 0.8 },
       },
-      { id: 'park', type: 'fill', source: SRC, 'source-layer': 'park', paint: { 'fill-color': '#171d21' } },
+      { id: 'park', type: 'fill', source: SRC, 'source-layer': 'park', paint: { 'fill-color': '#0f0f0f' } },
       {
         id: 'water', type: 'fill', source: SRC, 'source-layer': 'water',
         filter: ['!=', ['get', 'brunnel'], 'tunnel'],
-        paint: { 'fill-color': '#0e1318' },
+        paint: { 'fill-color': '#030303' },
       },
       {
         id: 'waterway', type: 'line', source: SRC, 'source-layer': 'waterway',
-        paint: { 'line-color': '#0e1318', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 0.5, 16, 3] },
+        paint: { 'line-color': '#030303', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 0.5, 16, 3] },
       },
       {
         id: 'aeroway', type: 'fill', source: SRC, 'source-layer': 'aeroway', minzoom: 11,
         filter: ['==', ['geometry-type'], 'Polygon'],
-        paint: { 'fill-color': '#1a2026' },
+        paint: { 'fill-color': '#121212' },
       },
       {
         id: 'road-minor', type: 'line', source: SRC, 'source-layer': 'transportation', minzoom: 12,
         filter: ['in', ['get', 'class'], ['literal', ['minor', 'service', 'track']]],
         layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': '#20262d', 'line-width': roadWidth(0.3, 9) },
+        paint: { 'line-color': '#191919', 'line-width': roadWidth(0.3, 9) },
       },
       {
         id: 'road-secondary', type: 'line', source: SRC, 'source-layer': 'transportation', minzoom: 9,
         filter: ['in', ['get', 'class'], ['literal', ['secondary', 'tertiary']]],
         layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': '#29303a', 'line-width': roadWidth(0.4, 14) },
+        paint: { 'line-color': '#232323', 'line-width': roadWidth(0.4, 14) },
       },
       {
         id: 'road-primary', type: 'line', source: SRC, 'source-layer': 'transportation', minzoom: 7,
         filter: ['in', ['get', 'class'], ['literal', ['primary', 'trunk']]],
         layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': '#323a45', 'line-width': roadWidth(0.5, 18) },
+        paint: { 'line-color': '#2b2b2b', 'line-width': roadWidth(0.5, 18) },
       },
       {
         id: 'road-motorway', type: 'line', source: SRC, 'source-layer': 'transportation', minzoom: 5,
         filter: ['==', ['get', 'class'], 'motorway'],
         layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': '#3c4551', 'line-width': roadWidth(0.7, 22) },
+        paint: { 'line-color': '#363636', 'line-width': roadWidth(0.7, 22) },
       },
       {
         id: 'rail', type: 'line', source: SRC, 'source-layer': 'transportation', minzoom: 11,
         filter: ['==', ['get', 'class'], 'rail'],
-        paint: { 'line-color': '#2d343d', 'line-width': 1, 'line-dasharray': [3, 3] },
+        paint: { 'line-color': '#262626', 'line-width': 1, 'line-dasharray': [3, 3] },
       },
       {
         id: 'boundary-county', type: 'line', source: SRC, 'source-layer': 'boundary',
         filter: ['all', ['in', ['get', 'admin_level'], ['literal', [4, 6]]], ['!=', ['get', 'maritime'], 1]],
         paint: {
-          'line-color': '#606a76',
+          'line-color': '#5c5c5c',
           'line-width': ['interpolate', ['linear'], ['zoom'], 6, 0.6, 12, 1.4],
           'line-dasharray': [4, 3],
         },
@@ -148,7 +148,7 @@ export function buildBasemapStyle(): StyleSpecification {
         id: 'building-3d', type: 'fill-extrusion', source: SRC, 'source-layer': 'building', minzoom: 13,
         filter: ['!=', ['get', 'hide_3d'], true],
         paint: {
-          'fill-extrusion-color': '#1e242b',
+          'fill-extrusion-color': '#181818',
           'fill-extrusion-height': ['interpolate', ['linear'], ['zoom'], 13, 0, 13.8, ['coalesce', ['get', 'render_height'], 4]],
           'fill-extrusion-base': ['coalesce', ['get', 'render_min_height'], 0],
           'fill-extrusion-opacity': 0.92,
@@ -166,7 +166,7 @@ export function buildBasemapStyle(): StyleSpecification {
           'text-transform': 'uppercase',
           'text-max-angle': 30,
         },
-        paint: { 'text-color': '#7d8692', 'text-halo-color': '#14181d', 'text-halo-width': 1.4 },
+        paint: { 'text-color': '#6c6c6c', 'text-halo-color': '#0a0a0a', 'text-halo-width': 1.4 },
       },
       {
         id: 'water-label-line', type: 'symbol', source: SRC, 'source-layer': 'water_name', minzoom: 9,
@@ -178,7 +178,7 @@ export function buildBasemapStyle(): StyleSpecification {
           'text-size': 11,
           'text-letter-spacing': 0.12,
         },
-        paint: { 'text-color': '#56616e', 'text-halo-color': '#0e1318', 'text-halo-width': 1 },
+        paint: { 'text-color': '#3e3e3e', 'text-halo-color': '#030303', 'text-halo-width': 1 },
       },
       {
         id: 'water-label-point', type: 'symbol', source: SRC, 'source-layer': 'water_name', minzoom: 7,
@@ -189,7 +189,7 @@ export function buildBasemapStyle(): StyleSpecification {
           'text-size': 11,
           'text-letter-spacing': 0.12,
         },
-        paint: { 'text-color': '#56616e', 'text-halo-color': '#0e1318', 'text-halo-width': 1 },
+        paint: { 'text-color': '#3e3e3e', 'text-halo-color': '#030303', 'text-halo-width': 1 },
       },
       {
         id: 'place-label', type: 'symbol', source: SRC, 'source-layer': 'place', minzoom: 7,
@@ -202,7 +202,7 @@ export function buildBasemapStyle(): StyleSpecification {
           'text-letter-spacing': 0.18,
           'text-max-width': 10,
         },
-        paint: { 'text-color': '#b3bbc5', 'text-halo-color': '#14181d', 'text-halo-width': 1.6 },
+        paint: { 'text-color': '#a4a4a4', 'text-halo-color': '#0a0a0a', 'text-halo-width': 1.6 },
       },
     ],
   };
