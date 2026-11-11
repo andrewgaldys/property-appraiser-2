@@ -9,6 +9,7 @@ A Python pipeline pulls the parcels from the Florida Statewide Cadastral layer (
 - Every parcel is outlined: class-colored strokes in 2D, and a light **roof rim** on each 3D block. House numbers and building SF label parcels from zoom 15.
 - Hover tooltip: assessed market value, site address, property type, owner, county, building SF, units (multifamily and mixed use only) and years held.
 - **Satellite**: a spyglass lens around the cursor (zoom 14+, toggle with `S`), a Map / Hybrid / Split basemap switch, and a live aerial of the selected parcel in the drawer.
+- **Search** (top-left of the map, or press `/`): owner names, site addresses, cities, parcel IDs (dashed or not), property types and shared mailing addresses. Results come back grouped as owners, mailing addresses and parcels; pick one parcel to fly to it, or show an owner, a mailing address or every match on the map as a removable filter.
 - **Top owners in view**: who controls the parcels on screen, after filters, ranked by assessed value, with each owner's share and the top five's combined share (ownership concentration). Group by owner name, or by mailing address to see the sponsor behind single-asset LLCs. Click an owner to open their most valuable parcel and spotlight the portfolio.
 - **Sidebar** in collapsible sections (Top owners, County, Markets, Asset class, Screens, Display) under the live **In view** totals. Screens: minimum years held, minimum lot size, maximum building-to-land value, and whether nominal-value parcels count. Explanations sit behind ⓘ buttons.
 - **Applied filters** show as removable chips over the map, with *Reset all*. The legend collapses to a button (and steps aside on its own while the drawer needs the room). A one-time hint suggests where to start.
@@ -51,11 +52,12 @@ pipeline/
   sync_postgis.py                  optional: load the joined table into PostGIS / Supabase
   pa2/                             schema, DOR use codes, owner resolution, MVT encoder, PMTiles writer, publisher
 web/                               Vite + TypeScript + MapLibre GL JS 6 + pmtiles
-  public/data/                     manifest.json, parcels.pmtiles, points.pmtiles, parcels/*.json, owners/*.json
+  public/data/                     manifest.json, parcels.pmtiles, points.pmtiles, parcels/*.json, owners/*.json, search.json
 .github/workflows/deploy.yml       build web/ and publish to GitHub Pages
 ```
 
-**Data bundle (64 MB).** Polygon tiles (z12–15, 24 MB) and centroid tiles (z8–12, 10 MB) carry only what the map filters, colors and labels.
+**Data bundle (69 MB).** Polygon tiles (z12–15, 24 MB) and centroid tiles (z8–12, 10 MB) carry only what the map filters, colors and labels.
+The search index (`search.json`, 6 MB, about 1.4 MB gzipped) loads the first time someone hovers over or focuses the search box.
 Full parcel records sit in 256 small JSON shards keyed by hash(parcel ID), and owner portfolios in shards keyed by owner group.
 A click fetches one shard, whatever the dataset size. The overview (zoom 8) loads under 2 MB of tiles; every file is under 25 MB.
 
@@ -212,6 +214,15 @@ The palette is muted for the black basemap and validated as a set for a map, whe
 - **Legend** (bottom-left, collapsible): class swatches with counts in "Asset class" mode; the metric ramp plus "Outline: asset class" in the other color modes.
 - **Interface**: black and white. Near-black surfaces in a few steps (map ground `#0b0b0b`, panels `#0d0d0d`), white text and white active states, neutral grays that keep WCAG AA contrast; the asset-class colors are the only hues (plus amber for nominal-value warnings). IBM Plex Sans in sentence case for words, IBM Plex Mono for numbers and IDs. Breakpoints: the sidebar slides in below 900 px, and the drawer becomes a bottom sheet below 720 px.
 
+## Search
+
+The search box sits at the top-left of the map (`/` focuses it from anywhere). It matches what you type against owner names, site addresses and cities, parcel IDs, property types (the DOR use description: "hotel", "warehouse") and the shared mailing addresses from the owner index.
+- **Matching.** Both sides are normalized the same way: uppercase, punctuation dropped, street types and directions abbreviated ("Street" → `ST`, "West" → `W`, "Trust" → `TR`). Every word you type must start a word in the field it matches, so "651 hibiscus" finds 651 HIBISCUS ST and "cityplace ret" finds CITYPLACE RETAIL LLC. Abbreviated words must match whole words ("trust" never matches TRUCKING). Parcel IDs match on their letters and digits, so `74-43-43-21-13-004-0060` works.
+- **Results** are grouped: a *Show all N matches on the map* row, then owners (by owner name, with their total parcels and value), mailing addresses (parcels, owner names, agent flag) and parcels (best first: parcel ID, then address, then owner, then other matches; by value within each).
+- **Picking** a parcel flies to it and opens the drawer. Picking an owner, a mailing address or *Show all* shows those parcels on the map as a filter and frames them: a chip names the search, the In-view totals and Top owners count only those parcels, and the chip's ×, the box's × or *Reset all* clears it. More than 10,000 matches asks for another word.
+- **Keyboard:** ↑/↓ to move, Enter to pick (the first row by default), Esc to close.
+- **Index.** `search.json` holds one row per parcel (ID, county, class, use code, site address, city, owner, value, portfolio keys, coordinates) plus the shared mailing addresses. The map filter uses a `match` expression on parcel IDs, which MapLibre compiles to a lookup table.
+
 ## Top owners in view
 
 The sidebar ranks the owners of the parcels currently on screen, after every filter, by assessed market value: each row shows the owner, parcel count, residential units, value and share of the value in view, with a bar scaled to the leader.
@@ -288,4 +299,4 @@ This creates `pa2_parcels` (indexed), the view `pa2_owner_portfolios` and the fu
 - Sale history: see *Sales history and hold periods*. Palm Beach's CAMA file keeps five transfers per parcel, so a parcel with five nominal transfers in a row keeps a minimum hold rather than its last priced sale.
 - Last-sale prices are as recorded: a deed covering several parcels may carry the whole package's price on each of them.
 - Condo units (004) and individual mobile homes (002) are excluded by default; see the opt-in flags.
-- Not yet included: address or owner search, comps, and fuzzy/Sunbiz entity matching.
+- Not yet included: comps and fuzzy/Sunbiz entity matching. Search matches word beginnings, not misspellings.

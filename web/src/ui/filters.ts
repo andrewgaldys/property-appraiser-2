@@ -107,7 +107,7 @@ export class FilterPanel {
     this.render();
     this.sync(store.get());
     store.subscribe((s, prev) => {
-      if (s.filters !== prev.filters || s.extrude !== prev.extrude || s.shade !== prev.shade) this.sync(s);
+      if (s.filters !== prev.filters || s.extrude !== prev.extrude || s.shade !== prev.shade || s.search !== prev.search) this.sync(s);
     });
   }
 
@@ -239,7 +239,7 @@ export class FilterPanel {
 
     this.resetBtn = h(
       'button',
-      { type: 'button', class: 'btn ghost sm', onclick: () => this.store.set({ filters: { ...DEFAULT_FILTERS } }) },
+      { type: 'button', class: 'btn ghost sm', onclick: () => this.store.set({ filters: { ...DEFAULT_FILTERS }, search: null }) },
       'Reset all filters',
     );
 
@@ -377,7 +377,7 @@ export class FilterPanel {
     const shade = SHADE_MODES.find((x) => x.id === s.shade)?.label ?? '';
     sum('display', `${ext} · ${shade}`);
 
-    const dirty = f.counties.length > 0 || f.classes.length > 0 || n > 0 || f.includeNominal;
+    const dirty = f.counties.length > 0 || f.classes.length > 0 || n > 0 || f.includeNominal || !!s.search;
     this.resetBtn.disabled = !dirty;
   }
 

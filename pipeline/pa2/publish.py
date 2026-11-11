@@ -5,6 +5,7 @@
     <out_dir>/points.pmtiles
     <out_dir>/parcels/<shard>.json {"fields": [...], "rows": {parcel_id: [...]}}
     <out_dir>/owners/<shard>.json  {"n": {name_key: entry}, "a": {addr_key: entry}}
+    <out_dir>/search.json          compact index for the search box (loaded on first use)
 
 Shards keep every request small (GitHub Pages / any static host), so the frontend
 never downloads more than one shard per click, whatever the dataset size.
@@ -49,7 +50,8 @@ from .tiler import (
 )
 from .util import key_shard, pid_shard
 
-_ARTIFACT_FILES = ("manifest.json", "parcels.pmtiles", "points.pmtiles", "parcels.geojson")
+_ARTIFACT_FILES = ("manifest.json", "parcels.pmtiles", "points.pmtiles", "parcels.geojson", "search.json")
+SEARCH_FIELDS = ["pid", "co", "cls", "uc", "addr", "city", "own", "jv", "onk", "oak", "lon", "lat"]
 _ARTIFACT_DIRS = ("parcels", "owners")
 
 
@@ -121,6 +123,29 @@ def polygon_features(records: list[dict]) -> list[tuple]:
     rims = edge_bands([r["geometry"] for r in records], RIM_WIDTH_M)
     return feats + [(r["fid"], {**props, "e": 1}, band, RIM_ZOOM)
                     for r, (_, props, _), band in zip(records, feats, rims) if band is not None]
+
+
+def search_index(records: list[dict], addrs_idx: dict[int, dict]) -> dict:
+    """Everything the search box matches on, one row per parcel, plus the shared mailing addresses.
+
+    Cities are stored once and referenced by index; coordinates are rounded to ~1 m (5 decimals),
+    enough to frame the matches. The frontend normalizes and matches client-side.
+    """
+    cities = sorted({r["site_city"] for r in records if r["site_city"]})
+    city_ix = {c: i for i, c in enumerate(cities)}
+    rows = [
+        [r["parcel_id"], r["county_code"], r["asset_class"], r["use_code"] or "", r["site_address"] or "",
+         city_ix.get(r["site_city"], -1), r["owner_name"] or "", r["just_value"] or 0, r["owner_name_key"],
+         r["owner_addr_key"], round(r["lon"], 5), round(r["lat"], 5)]
+        for r in records
+    ]
+    mailing = [[k, e["label"], e.get("names", 0), 1 if e.get("agent") else 0] for k, e in sorted(addrs_idx.items())]
+    return {
+        "fields": SEARCH_FIELDS,
+        "cities": cities,
+        "rows": rows,
+        "mailing": {"fields": ["key", "label", "names", "agent"], "rows": mailing},
+    }
 
 
 def clean_out_dir(out_dir: Path) -> None:
@@ -199,6 +224,8 @@ def publish(
     (out_dir / "owners").mkdir()
     owner_bytes = sum(_dump(out_dir / "owners" / f"{s}.json", obj) for s, obj in owners.items())
     log(f"  shards: {len(detail)} parcel ({detail_bytes / 1e6:.1f} MB), {len(owners)} owner ({owner_bytes / 1e6:.1f} MB)")
+    search_bytes = _dump(out_dir / "search.json", search_index(records, addrs_idx))
+    log(f"  search.json: {search_bytes / 1e6:.1f} MB")
 
     # 5. Vector tiles.
     poly_feats = polygon_features(records)
@@ -356,6 +383,7 @@ def build_manifest(records, names_idx, addrs_idx, *, source_kind, source_label, 
             "fields": TILE_FIELDS,
         },
         "details": {"url": "parcels/{shard}.json", "shard_hex": shard_hex, "hash": "fnv1a32(parcel_id)"},
+        "search": {"url": "search.json", "fields": SEARCH_FIELDS},
         "owners": {"url": "owners/{shard}.json", "shard_hex": shard_hex, "hash": "key % 16^shard_hex",
                    "item_fields": OWNER_ITEM_FIELDS, "max_items": PORTFOLIO_MAX_ITEMS},
     }

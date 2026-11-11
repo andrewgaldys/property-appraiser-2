@@ -170,9 +170,9 @@ export class MapController {
   // ---------------------------------------------------------------------------
 
   private apply(s: AppState, prev: AppState): void {
-    if (s.filters !== prev.filters) {
+    if (s.filters !== prev.filters || s.search !== prev.search) {
       const nominal = nominalMax(this.manifest);
-      for (const id of PARCEL_LAYERS) this.map.setFilter(id, layerFilter(id, s.filters, nominal));
+      for (const id of PARCEL_LAYERS) this.map.setFilter(id, layerFilter(id, s.filters, nominal, s.search));
     }
     if (s.extrude !== prev.extrude) {
       const flat = s.extrude === 'flat';

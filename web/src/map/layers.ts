@@ -20,7 +20,7 @@ import {
   RAMP_POINTS,
   RAMP_SELECTED,
 } from '../config';
-import type { AppState, ExtrudeMode, Filters, Manifest, Selection, ShadeMode } from '../types';
+import type { AppState, ExtrudeMode, Filters, Manifest, SearchSet, Selection, ShadeMode } from '../types';
 
 export const SRC_POLY = 'parcels';
 export const SRC_PTS = 'parcel-centroids';
@@ -203,10 +203,17 @@ export function rimHeights(mode: ExtrudeMode): { base: Expr | number; top: Expr 
  * Screening filters; `rim` selects the roof-rim features instead of the parcels themselves.
  * A parcel passes the hold screen on its known hold or its minimum (see HOLD_OR_FLOOR). Value
  * screens skip nominal-value parcels unless they are included: a $100 common area has no
- * meaningful building-to-land ratio.
+ * meaningful building-to-land ratio. A search shows only its parcels: `match` on the parcel id
+ * compiles to a lookup table, so even thousands of ids stay cheap per feature.
  */
-export function filterExpr(f: Filters, part: 'body' | 'rim' = 'body', nominal = NOMINAL_VALUE_MAX): FilterSpecification {
+export function filterExpr(
+  f: Filters,
+  part: 'body' | 'rim' = 'body',
+  nominal = NOMINAL_VALUE_MAX,
+  search: SearchSet | null = null,
+): FilterSpecification {
   const all: unknown[] = ['all', part === 'rim' ? IS_RIM : NOT_RIM];
+  if (search?.pids.length) all.push(['match', ['get', 'pid'], search.pids, true, false]);
   if (f.counties.length) all.push(['in', ['get', 'co'], ['literal', f.counties]]);
   if (f.classes.length) all.push(['in', ['get', 'cls'], ['literal', f.classes]]);
   if (f.minHold > 0) all.push(['>=', HOLD_OR_FLOOR, f.minHold]);
@@ -237,8 +244,8 @@ export function rimOpacity(s: AppState, rimMin: number): Expr {
 }
 
 /** Filter for a parcel layer id (the rim layer gets the rim variant). */
-export function layerFilter(id: string, f: Filters, nominal = NOMINAL_VALUE_MAX): FilterSpecification {
-  return filterExpr(f, id === L_RIM ? 'rim' : 'body', nominal);
+export function layerFilter(id: string, f: Filters, nominal = NOMINAL_VALUE_MAX, search: SearchSet | null = null): FilterSpecification {
+  return filterExpr(f, id === L_RIM ? 'rim' : 'body', nominal, search);
 }
 
 /** "4901" over "151K SF": house number + building size from the centroid layer. */
@@ -256,7 +263,7 @@ export function parcelLayers(manifest: Manifest, s: AppState, vector: boolean): 
   const poly = vector ? { source: SRC_POLY, 'source-layer': manifest.tiles.polygons.layer } : { source: SRC_POLY };
   const pts = vector ? { source: SRC_PTS, 'source-layer': manifest.tiles.points.layer } : { source: SRC_PTS };
   const nominal = nominalMax(manifest);
-  const filter = layerFilter(L_FLAT, s.filters, nominal);
+  const filter = layerFilter(L_FLAT, s.filters, nominal, s.search);
   const flat = s.extrude === 'flat';
   const color = colorExpr(manifest, s);
   const rimMin = manifest.tiles.polygons.rim_minzoom;
@@ -288,7 +295,7 @@ export function parcelLayers(manifest: Manifest, s: AppState, vector: boolean): 
       },
     },
     {
-      id: L_RIM, type: 'fill-extrusion', ...poly, minzoom: rimMin ?? 24, filter: layerFilter(L_RIM, s.filters, nominal),
+      id: L_RIM, type: 'fill-extrusion', ...poly, minzoom: rimMin ?? 24, filter: layerFilter(L_RIM, s.filters, nominal, s.search),
       layout: { visibility: flat || rimMin == null ? 'none' : 'visible' },
       paint: {
         'fill-extrusion-color': rimColor(s),

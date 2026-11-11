@@ -81,6 +81,8 @@ export interface Manifest {
     fields: Record<string, string>;
   };
   details: { url: string; shard_hex: number };
+  /** Search index (absent in older bundles). */
+  search?: { url: string; fields: string[] };
   owners: { url: string; shard_hex: number; item_fields: string[]; max_items: number };
 }
 
@@ -235,6 +237,14 @@ export interface Filters {
   includeNominal: boolean;
 }
 
+/** Parcels picked by a search, shown on the map like a filter (see SearchBox). */
+export interface SearchSet {
+  /** What was searched for, as the filter chip shows it. */
+  label: string;
+  pids: string[];
+  bbox: Bbox;
+}
+
 export interface Selection {
   pid: string;
   nameKey: number | null;
@@ -251,6 +261,8 @@ export interface AppState {
   selection: Selection | null;
   focus: boolean;
   ownerGroup: OwnerGrouping;
+  /** Search results shown on the map (not saved between visits). */
+  search: SearchSet | null;
 }
 
 /** One owner group among the parcels in view (see MapController.computeStats). */

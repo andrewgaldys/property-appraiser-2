@@ -20,6 +20,7 @@ import { FilterPanel, type SectionId } from './ui/filters';
 import { FirstVisitHint } from './ui/hint';
 import { Legend } from './ui/legend';
 import { OwnersPanel } from './ui/owners';
+import { SearchBox } from './ui/search';
 import { Toolbar } from './ui/toolbar';
 import { Tooltip } from './ui/tooltip';
 
@@ -77,6 +78,7 @@ async function boot(): Promise<void> {
     selection: null,
     focus: false,
     ownerGroup: 'name',
+    search: null,
     ...loadSavedView(),
   });
   store.subscribe((s, prev) => {
@@ -162,11 +164,23 @@ async function boot(): Promise<void> {
     icon('filters'),
     'Filters',
   );
+  // Search: owners, addresses, parcel IDs, property types, mailing addresses ("/" from anywhere).
+  const searchBox = new SearchBox(manifest, data, store, {
+    onShowSet: (set) => {
+      firstHint.dismiss();
+      store.set({ search: set });
+      mapc.fitBbox(set.bbox, { maxZoom: 16 });
+    },
+    onSelectParcel: (pid) => {
+      firstHint.dismiss();
+      void select(pid, { fly: true });
+    },
+  });
   mapEl.append(
     h(
       'div',
       { class: 'map-top' },
-      h('div', { class: 'map-top-row' }, panelToggle, new Toolbar(store).el),
+      h('div', { class: 'map-top-row' }, panelToggle, searchBox.el, new Toolbar(store).el),
       new ActiveFilters(store).el,
     ),
   );

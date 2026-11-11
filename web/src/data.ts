@@ -1,5 +1,6 @@
 import type { GeoJSONSourceSpecification } from '@maplibre/maplibre-gl-style-spec';
 import { RESIDENTIAL_CLASSES } from './config';
+import { buildIndex, type RawIndex, type SearchIndex } from './search';
 import type { Manifest, ParcelRecord, Portfolio, PortfolioGroup, PortfolioItem } from './types';
 
 /** 32-bit FNV-1a -> 8 hex chars. Must match pipeline/pa2/util.py fnv1a32 exactly. */
@@ -81,6 +82,21 @@ export class DataStore {
     const { url, shard_hex } = this.manifest.owners;
     const shard = (key % 16 ** shard_hex).toString(16).padStart(shard_hex, '0');
     return this.cached(this.owners, shard, () => this.json<OwnerShard>(url.replace('{shard}', shard)));
+  }
+
+  private searchIx: Promise<SearchIndex> | null = null;
+
+  /** The search index (~1.4 MB gzipped), fetched once on first use. */
+  searchIndex(): Promise<SearchIndex> {
+    if (!this.searchIx) {
+      const url = this.manifest.search?.url;
+      if (!url) return Promise.reject(new Error('This data bundle has no search index'));
+      this.searchIx = this.json<RawIndex>(url).then((raw) => buildIndex(raw, this.manifest.use_codes ?? {}));
+      this.searchIx.catch(() => {
+        this.searchIx = null;
+      });
+    }
+    return this.searchIx;
   }
 
   /** One owner-name ('n') or mailing-address ('a') group from the owner index. */
