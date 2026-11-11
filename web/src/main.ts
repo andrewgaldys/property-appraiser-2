@@ -11,7 +11,7 @@ import { DataStore } from './data';
 import { h, icon, toast } from './dom';
 import { MapController } from './map/controller';
 import { Store, loadSavedView, saveView } from './state';
-import type { AppState, Bbox, Manifest, ParcelRecord, Portfolio, PortfolioItem, TileProps } from './types';
+import type { AppState, Bbox, Manifest, OwnerRef, ParcelRecord, Portfolio, PortfolioItem, TileProps } from './types';
 import { ActiveFilters } from './ui/activeFilters';
 import { AerialCard } from './ui/aerial';
 import { Brief } from './ui/brief';
@@ -19,8 +19,11 @@ import { Drawer } from './ui/drawer';
 import { FilterPanel, type SectionId } from './ui/filters';
 import { FirstVisitHint } from './ui/hint';
 import { Legend } from './ui/legend';
+import { OwnerProfile } from './ui/ownerProfile';
 import { OwnersPanel } from './ui/owners';
+import { ResultsPanel } from './ui/results';
 import { SearchBox } from './ui/search';
+import { ownerRefOf } from './results';
 import { Toolbar } from './ui/toolbar';
 import { Tooltip } from './ui/tooltip';
 
@@ -79,6 +82,7 @@ async function boot(): Promise<void> {
     focus: false,
     ownerGroup: 'name',
     search: null,
+    ownerFocus: null,
     ...loadSavedView(),
   });
   store.subscribe((s, prev) => {
@@ -101,13 +105,28 @@ async function boot(): Promise<void> {
     onFitPortfolio: (items) => mapc.fitItems(items),
     onToggleFocus: () => toggleFocus(),
     onExport: () => void exportBrief(),
-    onCopyLink: () => {
-      navigator.clipboard?.writeText(window.location.href).then(
-        () => toast('Link to this parcel copied'),
-        () => toast('Copy failed: use the address bar'),
-      );
+    onCopyLink: () => copyLink('Link to this parcel copied'),
+    onBack: () => clearSelection(),
+    onOwnerProfile: () => {
+      if (current) void openOwner(refForRecord(current.rec));
     },
   }, aerial);
+
+  // Owner profile: the drawer-sized panel the parcel drawer opens on top of.
+  const profile = new OwnerProfile(manifest, {
+    onClose: () => closeOwner(),
+    onSelectParcel: (pid) => void select(pid, { fly: true }),
+    onOpenOwner: (ref) => void openOwner(ref),
+    onCopyLink: () => copyLink('Link to this owner copied'),
+  });
+  document.getElementById('app')!.append(profile.el);
+
+  function copyLink(done: string): void {
+    navigator.clipboard?.writeText(window.location.href).then(
+      () => toast(done),
+      () => toast('Copy failed: use the address bar'),
+    );
+  }
 
   const mapc: MapController = new MapController(
     mapEl,
@@ -118,6 +137,8 @@ async function boot(): Promise<void> {
       onReady: () => {
         document.body.classList.add('map-ready');
         const pid = hashParam('p');
+        const owner = hashParam('o');
+        if (owner) void openOwnerFromHash(owner, !pid);
         if (pid) void select(pid, { fly: true });
       },
       onSelect: (props: TileProps) => void select(props.pid, { hint: props }),
@@ -140,16 +161,40 @@ async function boot(): Promise<void> {
       if (window.matchMedia('(max-width: 900px)').matches) setPanelOpen(false);
       mapc.fitBbox(b, { maxZoom: 15.3, pitch: store.get().extrude === 'flat' ? 0 : 55 });
     },
+    onShowResults: () => {
+      if (window.matchMedia('(max-width: 900px)').matches) setPanelOpen(false);
+      results.show('owners');
+    },
   });
   // Top owners in view: sits right under the In-view totals it shares a computation with.
   const owners = new OwnersPanel(manifest, data, store, {
     onPick: (row) => {
       if (window.matchMedia('(max-width: 900px)').matches) setPanelOpen(false);
-      void select(row.top.pid, { hint: row.top, focus: true });
+      void openOwner({ kind: row.kind, id: row.id }, { fit: false });
     },
   });
   document.querySelector('#filters .inview')?.after(owners.el);
-  new Legend(mapEl, manifest, store);
+  const legend = new Legend(mapEl, manifest, store);
+
+  // Owners & parcels tables under the map: every matching parcel, grouped into owners.
+  const RESULTS_BAR = 46;
+  const results = new ResultsPanel(manifest, data, store, {
+    onOpenOwner: (ref) => void openOwner(ref),
+    onSelectParcel: (pid) => void select(pid, { fly: true }),
+    onLayout: (px) => {
+      legend.setTableOpen(px > RESULTS_BAR);
+      // On phones the open table covers the map, so the map's own controls stay put under it.
+      const phone = window.matchMedia('(max-width: 720px)').matches;
+      const h = phone ? RESULTS_BAR : Math.round(px);
+      mapEl.style.setProperty('--results-h', `${h}px`);
+      mapc.setBottomInset(h);
+    },
+    viewBbox: () => mapc.viewBbox(),
+  });
+  mapEl.append(results.el);
+  mapEl.style.setProperty('--results-h', `${RESULTS_BAR}px`);
+  mapc.map.on('moveend', () => results.mapMoved());
+  window.addEventListener('resize', () => results.relayout());
 
   // Map overlay, top-left: [Filters (narrow screens)] [basemap + lens], then the applied-filter chips.
   const panelToggle = h(
@@ -227,6 +272,7 @@ async function boot(): Promise<void> {
       selection: { pid, nameKey: hint?.onk ?? null, addrKey: hint?.oak ?? null },
       focus: opts.focus ?? (prev.focus && (opts.keepFocus || samePortfolio)),
     });
+    drawer.setBack(profile.isOpen ? profile.current?.label || 'owner' : null);
     drawer.showLoading(hint);
     mapc.setRightInset(drawerInset());
     try {
@@ -259,8 +305,60 @@ async function boot(): Promise<void> {
     current = null;
     store.set({ selection: null, focus: false });
     drawer.close();
-    mapc.setRightInset(0);
+    drawer.setBack(null);
+    // Closing a parcel opened from an owner profile goes back to the profile.
+    mapc.setRightInset(profile.isOpen ? drawerInset() : 0);
     setHashParam('p', null);
+  }
+
+  /** The owner group of a parcel record, by the current grouping (as in the tables and Top owners). */
+  function refForRecord(rec: ParcelRecord): OwnerRef {
+    return ownerRefOf({ pid: rec.parcel_id, onk: rec.owner_name_key, oak: rec.owner_addr_key }, store.get().ownerGroup, data.loadedIndex);
+  }
+
+  /** Open an owner profile: spotlight its parcels on the map and frame them. */
+  async function openOwner(ref: OwnerRef, opts: { fit?: boolean } = {}): Promise<void> {
+    firstHint.dismiss();
+    let ix = data.loadedIndex;
+    if (!ix) {
+      toast('Loading owner data…', 1200);
+      ix = await data.parcelIndex().catch(() => null);
+    }
+    if (!ix) {
+      toast('Could not load owner data. Check your connection and try again.');
+      return;
+    }
+    if (drawer.isOpen) {
+      token++;
+      current = null;
+      store.set({ selection: null, focus: false });
+      drawer.close();
+      setHashParam('p', null);
+    }
+    store.set({ ownerFocus: ref });
+    const rows = profile.show(ix, ref);
+    mapc.setRightInset(drawerInset());
+    if (rows.length && opts.fit !== false) mapc.fitItems(rows);
+    setHashParam('o', rows[0] ? `${ref.kind}.${rows[0].pid}` : null);
+  }
+
+  function closeOwner(): void {
+    profile.close();
+    store.set({ ownerFocus: null });
+    if (!drawer.isOpen) mapc.setRightInset(0);
+    drawer.setBack(null);
+    setHashParam('o', null);
+  }
+
+  /** "o=n.<parcel id>": the owner-name (n), mailing-address (a) or single-parcel (p) group of that parcel. */
+  async function openOwnerFromHash(value: string, fit: boolean): Promise<void> {
+    const [kind, pid] = value.split('.');
+    const ix = await data.parcelIndex().catch(() => null);
+    const row = pid ? ix?.byPid.get(pid) : undefined;
+    if (!row) return;
+    const ref: OwnerRef =
+      kind === 'a' && row.oak != null ? { kind: 'a', id: row.oak } : kind === 'n' && row.onk != null ? { kind: 'n', id: row.onk } : { kind: 'p', id: row.pid };
+    await openOwner(ref, { fit });
   }
 
   function toggleFocus(): void {
@@ -288,19 +386,23 @@ async function boot(): Promise<void> {
     brief.open(rec, portfolio, image, manifest, aerialImage);
   }
 
-  // A parcel link pasted into an already-open tab only changes the hash: follow it.
+  // A parcel or owner link pasted into an already-open tab only changes the hash: follow it.
   window.addEventListener('hashchange', () => {
     if (!mapc.isReady) return;
     const pid = hashParam('p');
     const cur = store.get().selection?.pid ?? null;
     if (pid && pid !== cur) void select(pid, { fly: true });
     else if (!pid && cur) clearSelection();
+    const owner = hashParam('o');
+    if (owner && !profile.isOpen) void openOwnerFromHash(owner, true);
+    else if (!owner && profile.isOpen) closeOwner();
   });
 
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape' || brief.isOpen) return;
     if (document.body.classList.contains('panel-open')) setPanelOpen(false);
     else if (drawer.isOpen) clearSelection();
+    else if (profile.isOpen) closeOwner();
   });
 }
 

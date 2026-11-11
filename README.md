@@ -9,6 +9,8 @@ A Python pipeline pulls the parcels from the Florida Statewide Cadastral layer (
 - Every parcel is outlined: class-colored strokes in 2D, and a light **roof rim** on each 3D block. House numbers and building SF label parcels from zoom 15.
 - Hover tooltip: assessed market value, site address, property type, owner, county, building SF, units (multifamily and mixed use only) and years held.
 - **Satellite**: a spyglass lens around the cursor (zoom 14+, toggle with `S`), a Map / Hybrid / Split basemap switch, and a live aerial of the selected parcel in the drawer.
+- **Owners & parcels tables** (under the map): every parcel matching the screen and search, across all three counties or only the map view, grouped into owners with related entities, parcel counts, value, building SF, asset classes, longest and average hold, and mailing address. Sortable, linked to the map both ways, and exportable to CSV for a CRM or mail merge.
+- **Owner profiles**: everything an owner holds in the three counties, a mini map, an acquisition timeline (last priced sale of each parcel), average hold, asset-class mix, mailing addresses and related entities; CSV export of the holdings.
 - **Search** (top-left of the map, or press `/`): owner names, site addresses, cities, parcel IDs (dashed or not), property types and shared mailing addresses. Results come back grouped as owners, mailing addresses and parcels; pick one parcel to fly to it, or show an owner, a mailing address or every match on the map as a removable filter.
 - **Top owners in view**: who controls the parcels on screen, after filters, ranked by assessed value, with each owner's share and the top five's combined share (ownership concentration). Group by owner name, or by mailing address to see the sponsor behind single-asset LLCs. Click an owner to open their most valuable parcel and spotlight the portfolio.
 - **Sidebar** in collapsible sections (Top owners, County, Markets, Asset class, Screens, Display) under the live **In view** totals. Screens: minimum years held, minimum lot size, maximum building-to-land value, and whether nominal-value parcels count. Explanations sit behind ⓘ buttons.
@@ -52,12 +54,12 @@ pipeline/
   sync_postgis.py                  optional: load the joined table into PostGIS / Supabase
   pa2/                             schema, DOR use codes, owner resolution, MVT encoder, PMTiles writer, publisher
 web/                               Vite + TypeScript + MapLibre GL JS 6 + pmtiles
-  public/data/                     manifest.json, parcels.pmtiles, points.pmtiles, parcels/*.json, owners/*.json, search.json
+  public/data/                     manifest.json, parcels.pmtiles, points.pmtiles, parcels/*.json, owners/*.json, index.json
 .github/workflows/deploy.yml       build web/ and publish to GitHub Pages
 ```
 
-**Data bundle (69 MB).** Polygon tiles (z12–15, 24 MB) and centroid tiles (z8–12, 10 MB) carry only what the map filters, colors and labels.
-The search index (`search.json`, 6 MB, about 1.4 MB gzipped) loads the first time someone hovers over or focuses the search box.
+**Data bundle (74 MB).** Polygon tiles (z12–15, 24 MB) and centroid tiles (z8–12, 10 MB) carry only what the map filters, colors and labels.
+The parcel index (`index.json`, 10.8 MB, about 2.6 MB gzipped: one row per parcel with what search, the results tables, owner profiles and CSV export need) loads the first time someone uses search or opens the tables.
 Full parcel records sit in 256 small JSON shards keyed by hash(parcel ID), and owner portfolios in shards keyed by owner group.
 A click fetches one shard, whatever the dataset size. The overview (zoom 8) loads under 2 MB of tiles; every file is under 25 MB.
 
@@ -221,7 +223,34 @@ The search box sits at the top-left of the map (`/` focuses it from anywhere). I
 - **Results** are grouped: a *Show all N matches on the map* row, then owners (by owner name, with their total parcels and value), mailing addresses (parcels, owner names, agent flag) and parcels (best first: parcel ID, then address, then owner, then other matches; by value within each).
 - **Picking** a parcel flies to it and opens the drawer. Picking an owner, a mailing address or *Show all* shows those parcels on the map as a filter and frames them: a chip names the search, the In-view totals and Top owners count only those parcels, and the chip's ×, the box's × or *Reset all* clears it. More than 10,000 matches asks for another word.
 - **Keyboard:** ↑/↓ to move, Enter to pick (the first row by default), Esc to close.
-- **Index.** `search.json` holds one row per parcel (ID, county, class, use code, site address, city, owner, value, portfolio keys, coordinates) plus the shared mailing addresses. The map filter uses a `match` expression on parcel IDs, which MapLibre compiles to a lookup table.
+- **Index.** Search reads `index.json`, the same parcel table the results use (see below), plus the shared mailing addresses. The map filter uses a `match` expression on parcel IDs, which MapLibre compiles to a lookup table.
+
+## Owners & parcels tables
+
+A bar along the bottom of the map opens two tables of the current screen's results: every parcel that matches the filters, screens and search, in all three counties (**All matching**) or only inside the current view (**In map view**). The sidebar's *See matching owners* button opens it too.
+The tables run on `index.json` in the browser and use exactly the map's filter rules (`web/src/results.ts` `matcher` mirrors `web/src/map/layers.ts` `filterExpr`), so a screen covers parcels the map has not loaded yet. Only the rows on screen are drawn, so all 46,733 parcels scroll smoothly.
+
+- **Owners**: one row per owner group, with the grouping set by Top owners' *By name / By address* toggle. **By name** groups the normalized owner name. **By address** groups the normalized mailing address, which shows the sponsor behind single-asset LLCs.
+  - Registered-agent and manager addresses never form an owner group; their parcels fall back to the owner name. These are the 11 addresses shared by 25 or more owner names, listed as `owners.agent_addr_keys` in the manifest.
+  - Columns: owner, related entities, parcels (matching, of the owner's total), assessed value, building SF, asset classes, longest hold, average hold and mailing address. Related entities are other owner names at a shared mailing address, one hop and agent addresses excluded; they are shown for context and never added into the row's totals.
+  - **Longest hold** shows minimums as "57+". **Average hold** counts exact holds only and says how many it used, e.g. "10 yrs, 50 of 54".
+- **Parcels**: address, class, assessed value (or "Nominal"), building SF, lot, last sale (price and date, or "Not on record"), years held, owner and mailing address.
+- **Sorting**: click a column header; click again to reverse.
+- **Linked to the map**: clicking an owner row opens the owner profile and spotlights the group's parcels. Clicking a parcel row flies to the parcel and opens it. Selecting a parcel on the map highlights its row in both tables.
+- **Export CSV** downloads the open table in its current sort, as UTF-8 with a BOM so Excel opens it correctly. Missing values are left blank, never zero. Text that a spreadsheet would run as a formula is escaped.
+  - **Owners columns:** Owner name, Related entities, Matching parcels, Total parcels (all 3 counties), Assessed market value, Building SF, Residential units, Asset classes, Longest hold, Average hold; then Mailing address 1 and 2, city, state and ZIP as separate columns for mail merge; then Other mailing addresses, Largest property and Grouped by.
+  - **Parcels columns:** Parcel ID (county format), County, Site address, City, ZIP, Asset class, Property use, Assessed market value, Nominal-value flag, Building SF, Lot acres and SF, Residential units, Year built, Last sale date and price, Years held, Owner name, the split mailing address plus a one-line version, Latitude, Longitude, and a Link back to the parcel in the app.
+
+## Owner profiles
+
+Opening an owner (from a table row, Top owners, a parcel's *Owner profile* button or a link) shows everything the group holds in the three counties, whatever the filters:
+- Totals (parcels, assessed market value, building SF, units or lot area) and holds: average of the exact holds (with how many are exact) and the longest hold, as a minimum where it predates the records.
+- **Where they own**: a mini map of the parcels, class-colored.
+- **Asset class mix**: one bar by assessed value, with parcels, value and share per class.
+- **Acquisition timeline**: each parcel's last sale of $100 or more on record, by year and price on a log scale, with a hover readout and a dated list. Parcels whose last priced sale predates the county records, and parcels with no sale on record, are counted in a note instead of plotted. Prices are as recorded: one deed covering several parcels can carry the whole price on each.
+- **Entities**: for an address group, the owner names at that address; for a name group, its mailing addresses and the related entities linked through them. Any of these opens its own profile.
+- **All parcels**: each opens in the property panel on top of the profile, with *Back to <owner>*.
+- The map spotlights the group, and the link (`#…&o=n.<parcel id>`: the owner-name group of that parcel; `a.` for its mailing-address group) reopens the profile. **Export parcels (CSV)** downloads the holdings.
 
 ## Top owners in view
 

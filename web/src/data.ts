@@ -1,6 +1,6 @@
 import type { GeoJSONSourceSpecification } from '@maplibre/maplibre-gl-style-spec';
 import { RESIDENTIAL_CLASSES } from './config';
-import { buildIndex, type RawIndex, type SearchIndex } from './search';
+import { buildIndex, type ParcelIndex, type RawIndex } from './parcelIndex';
 import type { Manifest, ParcelRecord, Portfolio, PortfolioGroup, PortfolioItem } from './types';
 
 /** 32-bit FNV-1a -> 8 hex chars. Must match pipeline/pa2/util.py fnv1a32 exactly. */
@@ -84,19 +84,24 @@ export class DataStore {
     return this.cached(this.owners, shard, () => this.json<OwnerShard>(url.replace('{shard}', shard)));
   }
 
-  private searchIx: Promise<SearchIndex> | null = null;
+  private parcelIx: Promise<ParcelIndex> | null = null;
+  /** The loaded parcel index, once available (null before the first load finishes). */
+  loadedIndex: ParcelIndex | null = null;
 
-  /** The search index (~1.4 MB gzipped), fetched once on first use. */
-  searchIndex(): Promise<SearchIndex> {
-    if (!this.searchIx) {
-      const url = this.manifest.search?.url;
-      if (!url) return Promise.reject(new Error('This data bundle has no search index'));
-      this.searchIx = this.json<RawIndex>(url).then((raw) => buildIndex(raw, this.manifest.use_codes ?? {}));
-      this.searchIx.catch(() => {
-        this.searchIx = null;
+  /** Every parcel in one table (~2.6 MB gzipped), fetched once on first use (search, results tables). */
+  parcelIndex(): Promise<ParcelIndex> {
+    if (!this.parcelIx) {
+      const url = this.manifest.index?.url;
+      if (!url) return Promise.reject(new Error('This data bundle has no parcel index'));
+      this.parcelIx = this.json<RawIndex>(url).then((raw) => {
+        this.loadedIndex = buildIndex(raw, this.manifest.use_codes ?? {});
+        return this.loadedIndex;
+      });
+      this.parcelIx.catch(() => {
+        this.parcelIx = null;
       });
     }
-    return this.searchIx;
+    return this.parcelIx;
   }
 
   /** One owner-name ('n') or mailing-address ('a') group from the owner index. */

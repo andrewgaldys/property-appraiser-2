@@ -69,6 +69,8 @@ export class MapController {
   private ready = false;
   private rightInset = 0;
   private overlay: SatelliteOverlay | null = null;
+  /** Registered-agent / manager addresses: never an owner group (see the manifest). */
+  private agentKeys: Set<number>;
 
   constructor(
     private container: HTMLElement,
@@ -78,6 +80,7 @@ export class MapController {
     private events: MapEvents,
     private tooltip: Tooltip,
   ) {
+    this.agentKeys = new Set(manifest.owners.agent_addr_keys ?? []);
     const customStyle = import.meta.env.VITE_BASEMAP_STYLE?.trim();
     this.map = new MapLibreMap({
       container,
@@ -188,7 +191,8 @@ export class MapController {
       if (flat && pitch > 0) this.map.easeTo({ pitch: 0, duration: 700 });
       if (!flat && pitch < 25) this.map.easeTo({ pitch: 55, duration: 900 });
     }
-    if (s.shade !== prev.shade || s.selection !== prev.selection || s.focus !== prev.focus) this.applyColors(s);
+    if (s.shade !== prev.shade || s.selection !== prev.selection || s.focus !== prev.focus || s.ownerFocus !== prev.ownerFocus)
+      this.applyColors(s);
     if (s.basemap !== prev.basemap || s.lens !== prev.lens || s.shade !== prev.shade) this.applyBasemapMode(s);
     if (s.selection?.pid !== prev.selection?.pid) this.overlay?.setSelected(s.selection?.pid ?? null);
     this.scheduleStats();
@@ -284,6 +288,7 @@ export class MapController {
     // Nominal-value parcels ($100 common areas, sub-parcels) stay on the map but out of the totals,
     // unless the viewer includes them.
     const { filters, ownerGroup } = this.store.get();
+    const agents = this.agentKeys;
     const include = filters.includeNominal;
     const nominal = nominalMax(this.manifest);
     const seen = new Set<string>();
@@ -305,7 +310,11 @@ export class MapController {
       sf += p.sf ?? 0;
       // Owner groups: the portfolio keys in the tiles (multi-parcel owners), else the parcel itself.
       const [kind, id] =
-        ownerGroup === 'addr' && p.oak != null ? (['a', p.oak] as const) : p.onk != null ? (['n', p.onk] as const) : (['p', p.pid] as const);
+        ownerGroup === 'addr' && p.oak != null && !agents.has(p.oak)
+          ? (['a', p.oak] as const)
+          : p.onk != null
+            ? (['n', p.onk] as const)
+            : (['p', p.pid] as const);
       const key = `${kind}${id}`;
       let g = owners.get(key);
       if (!g) {
@@ -352,6 +361,26 @@ export class MapController {
     const center = this.map.unproject([x, y]);
     this.map.jumpTo({ center, padding: { top, bottom, left, right: px } });
     this.rightInset = px;
+  }
+
+  private bottomInset = 0;
+
+  /** Reserve `px` at the bottom for the results table (same idea as setRightInset). */
+  setBottomInset(px: number): void {
+    if (px === this.bottomInset) return;
+    const cv = this.map.getCanvas();
+    const { top = 0, left = 0, right = 0 } = this.map.getPadding();
+    const x = left + (cv.clientWidth - left - right) / 2;
+    const y = top + (cv.clientHeight - top - px) / 2;
+    const center = this.map.unproject([x, y]);
+    this.map.jumpTo({ center, padding: { top, left, right, bottom: px } });
+    this.bottomInset = px;
+  }
+
+  /** Current view as [west, south, east, north] (for "in map view" results). */
+  viewBbox(): Bbox {
+    const b = this.map.getBounds();
+    return [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
   }
 
   /** Pan just enough to bring a parcel out from under the drawer / screen edge. */

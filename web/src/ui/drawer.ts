@@ -30,6 +30,10 @@ export interface DrawerHandlers {
   onToggleFocus(): void;
   onExport(): void;
   onCopyLink(): void;
+  /** Back to the owner profile this parcel was opened from. */
+  onBack(): void;
+  /** Open the owner profile of this parcel's owner. */
+  onOwnerProfile(): void;
 }
 
 const section = (title: string, ...children: Child[]) => h('section', { class: 'dr-sec' }, h('h3', null, title), ...children);
@@ -72,6 +76,7 @@ export class Drawer {
   private top: HTMLElement;
   private body: HTMLElement;
   private foot: HTMLElement;
+  private back: string | null = null;
 
   constructor(
     root: HTMLElement,
@@ -115,10 +120,22 @@ export class Drawer {
     document.body.classList.remove('drawer-open');
   }
 
+  /** Show "Back to <owner>" at the top while this parcel was opened from an owner profile. */
+  setBack(label: string | null): void {
+    this.back = label;
+  }
+
+  private backButton(): HTMLElement | null {
+    return this.back
+      ? h('button', { type: 'button', class: 'dr-back', onclick: () => this.handlers.onBack() }, icon('back', 14), h('span', null, `Back to ${this.back}`))
+      : null;
+  }
+
   showLoading(hint?: TileProps): void {
     clear(this.top);
     clear(this.body);
     this.foot.hidden = true;
+    appendAll(this.top, this.backButton());
     this.top.append(
       h(
         'header',
@@ -173,6 +190,7 @@ export class Drawer {
 
     appendAll(
       this.top,
+      this.backButton(),
       h(
         'header',
         { class: 'dr-head' },
@@ -285,6 +303,12 @@ export class Drawer {
     const block: Child[] = [
       h('div', { class: 'owner-line' }, h('span', { class: 'owner-name-static' }, r.owner_name || 'Owner not reported')),
       h('div', { class: 'owner-addr' }, r.owner_addr || 'No mailing address on record'),
+      h(
+        'button',
+        { type: 'button', class: 'btn solid sm op-open', onclick: () => this.handlers.onOwnerProfile() },
+        icon('arrow', 14),
+        'Owner profile',
+      ),
     ];
     if (portfolio === undefined) {
       block.push(h('div', { class: 'dr-loading sm' }, h('span', { class: 'spinner' }), 'Finding other parcels with this owner'));

@@ -24,9 +24,10 @@ export class Legend {
   private toggle: HTMLButtonElement;
   /** The viewer's choice (remembered). */
   private pref: boolean;
-  /** Collapsed for now because the property panel needs the room. */
+  /** Collapsed for now because a panel needs the room. */
   private auto = false;
   private panelOpen = false;
+  private tableOpen = false;
 
   constructor(
     container: HTMLElement,
@@ -60,7 +61,7 @@ export class Legend {
     this.render(store.get());
     window.addEventListener('resize', () => this.makeRoom(this.panelOpen));
     store.subscribe((s, prev) => {
-      if (!!s.selection !== !!prev.selection) this.makeRoom(!!s.selection);
+      if (!!s.selection !== !!prev.selection || !!s.ownerFocus !== !!prev.ownerFocus) this.makeRoom(!!s.selection || !!s.ownerFocus);
       if (s.shade !== prev.shade || s.extrude !== prev.extrude || s.selection !== prev.selection) this.render(s);
     });
   }
@@ -69,9 +70,15 @@ export class Legend {
     return this.auto || this.pref;
   }
 
+  /** The results table is open: the map is short, so the legend steps aside. */
+  setTableOpen(open: boolean): void {
+    this.tableOpen = open;
+    this.makeRoom(this.panelOpen);
+  }
+
   private makeRoom(panelOpen: boolean): void {
     this.panelOpen = panelOpen;
-    const cramped = panelOpen && window.innerWidth < 1280;
+    const cramped = (panelOpen && window.innerWidth < 1280) || this.tableOpen;
     if (cramped && !this.collapsed) {
       this.auto = true;
       this.apply();

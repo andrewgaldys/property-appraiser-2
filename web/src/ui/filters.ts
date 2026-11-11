@@ -24,6 +24,8 @@ import { infoTip } from './infotip';
 export interface FilterPanelHandlers {
   onCounty(code: number | null): void;
   onMarket(bbox: Bbox): void;
+  /** Open the Owners table for the current screen. */
+  onShowResults(): void;
 }
 
 export type SectionId = 'county' | 'markets' | 'classes' | 'screens' | 'display';
@@ -307,6 +309,12 @@ export class FilterPanel {
             'nominal-value parcels',
             `Parcels assessed under ${money(max)} (${int(nominalCount)} in this dataset) are usually common areas, condo-style or sub-parcels whose value sits on a neighboring parcel, like CityPlace’s $100 parcels.\n\nThey stay on the map and keep their badge in the parcel panel, but value screens and the in-view totals leave them out unless this is on.`,
           ),
+        ),
+        h(
+          'button',
+          { type: 'button', class: 'btn solid sm screens-cta', onclick: () => this.handlers.onShowResults() },
+          icon('table', 14),
+          'See matching owners',
         ),
       ),
       this.section(

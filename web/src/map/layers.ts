@@ -20,7 +20,7 @@ import {
   RAMP_POINTS,
   RAMP_SELECTED,
 } from '../config';
-import type { AppState, ExtrudeMode, Filters, Manifest, SearchSet, Selection, ShadeMode } from '../types';
+import type { AppState, ExtrudeMode, Filters, Manifest, OwnerRef, SearchSet, Selection, ShadeMode } from '../types';
 
 export const SRC_POLY = 'parcels';
 export const SRC_PTS = 'parcel-centroids';
@@ -109,20 +109,34 @@ export function inPortfolio(sel: Selection | null): Expr | null {
   return parts.length === 1 ? parts[0]! : (['any', ...parts] as Expr);
 }
 
+/** An opened owner profile's parcels: its name key, its mailing-address key, or the one parcel. */
+function ownerExpr(r: OwnerRef | null): Expr | null {
+  if (!r) return null;
+  if (r.kind === 'n') return ['==', ['get', 'onk'], Number(r.id)];
+  if (r.kind === 'a') return ['==', ['get', 'oak'], Number(r.id)];
+  return ['==', ['get', 'pid'], String(r.id)];
+}
+
+/** What the map lights up: an opened owner's parcels, else the selected parcel's portfolio. */
+const highlight = (s: AppState): Expr | null => ownerExpr(s.ownerFocus) ?? inPortfolio(s.selection);
+/** How far everything else recedes: strongly for a spotlight (owner profile or focus), less for a plain selection. */
+const strong = (s: AppState): boolean => !!s.ownerFocus || s.focus;
+const dimmed = (s: AppState): boolean => !!s.ownerFocus || !!s.selection;
+
 /**
  * Fill / extrusion / dot color. "Class" mode colors by asset class; metric modes use the
- * neutral ramp. A selection dims everything else; its portfolio keeps full strength.
+ * neutral ramp. A selection or an open owner profile dims everything else; the portfolio keeps full strength.
  */
 export function colorExpr(manifest: Manifest, s: AppState, variant: 'polygons' | 'points' = 'polygons'): Expr {
   const sel = s.selection;
   const byClass = s.shade === 'class';
   const base = byClass
-    ? classColors(!sel ? 0 : s.focus ? 0.82 : 0.55)
-    : ramp(manifest, s.shade as MetricMode, !sel ? (variant === 'points' ? RAMP_POINTS : RAMP_NORMAL) : s.focus ? RAMP_FOCUS : RAMP_SELECTED);
+    ? classColors(!dimmed(s) ? 0 : strong(s) ? 0.82 : 0.55)
+    : ramp(manifest, s.shade as MetricMode, !dimmed(s) ? (variant === 'points' ? RAMP_POINTS : RAMP_NORMAL) : strong(s) ? RAMP_FOCUS : RAMP_SELECTED);
   const cases: unknown[] = ['case'];
   if (sel) cases.push(isSelected(sel), COLOR_SELECTED);
   cases.push(isHovered, byClass ? classColors(0, 0.45) : COLOR_HOVER);
-  const pf = inPortfolio(sel);
+  const pf = highlight(s);
   if (pf) cases.push(pf, byClass ? classColors() : COLOR_PORTFOLIO);
   cases.push(base);
   return cases as Expr;
@@ -133,9 +147,9 @@ export function outlineColor(s: AppState): Expr {
   const sel = s.selection;
   const cases: unknown[] = ['case'];
   if (sel) cases.push(isSelected(sel), '#ffffff');
-  const pf = inPortfolio(sel);
+  const pf = highlight(s);
   if (pf) cases.push(pf, '#ffffff');
-  cases.push(isHovered, '#ffffff', classColors(!sel ? 0 : s.focus ? 0.7 : 0.35));
+  cases.push(isHovered, '#ffffff', classColors(!dimmed(s) ? 0 : strong(s) ? 0.7 : 0.35));
   return cases as Expr;
 }
 
@@ -144,9 +158,9 @@ export function rimColor(s: AppState): Expr {
   const sel = s.selection;
   const cases: unknown[] = ['case'];
   if (sel) cases.push(isSelected(sel), '#ffffff');
-  const pf = inPortfolio(sel);
+  const pf = highlight(s);
   if (pf) cases.push(pf, '#ffffff');
-  const base = sel ? classColors(s.focus ? 0.8 : 0.45) : classColors(0, s.shade === 'class' ? 0.4 : 0);
+  const base = dimmed(s) ? classColors(strong(s) ? 0.8 : 0.45) : classColors(0, s.shade === 'class' ? 0.4 : 0);
   cases.push(isHovered, '#ffffff', base);
   return cases as Expr;
 }
@@ -156,7 +170,7 @@ export function outlineWidth(s: AppState): Expr {
   const at = (base: number, pf: number, sel: number, hover: number): unknown => {
     const cases: unknown[] = ['case'];
     if (s.selection) cases.push(isSelected(s.selection), sel);
-    const p = inPortfolio(s.selection);
+    const p = highlight(s);
     if (p) cases.push(p, pf);
     cases.push(isHovered, hover, base);
     return cases;
@@ -168,7 +182,7 @@ export function pointRadius(s: AppState): Expr {
   const at = (base: number, sel: number, pf: number): Expr | number => {
     const cases: unknown[] = ['case'];
     if (s.selection) cases.push(isSelected(s.selection), sel);
-    const p = inPortfolio(s.selection);
+    const p = highlight(s);
     if (p) cases.push(p, pf);
     if (cases.length === 1) return base;
     cases.push(base);
@@ -180,7 +194,7 @@ export function pointRadius(s: AppState): Expr {
 export const pointStrokeWidth = (s: AppState): Expr => {
   const cases: unknown[] = ['case'];
   if (s.selection) cases.push(isSelected(s.selection), 2);
-  const p = inPortfolio(s.selection);
+  const p = highlight(s);
   if (p) cases.push(p, 1.2);
   cases.push(isHovered, 1, 0);
   return cases as Expr;

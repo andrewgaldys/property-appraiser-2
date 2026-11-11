@@ -116,7 +116,7 @@ export class SearchBox {
     if (this.index || this.loading || this.failed) return;
     this.loading = true;
     this.data
-      .searchIndex()
+      .parcelIndex()
       .then((ix) => {
         this.index = ix;
       })

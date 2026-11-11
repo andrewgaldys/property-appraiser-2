@@ -81,9 +81,9 @@ export interface Manifest {
     fields: Record<string, string>;
   };
   details: { url: string; shard_hex: number };
-  /** Search index (absent in older bundles). */
-  search?: { url: string; fields: string[] };
-  owners: { url: string; shard_hex: number; item_fields: string[]; max_items: number };
+  /** Every parcel in one compact table: search, results tables, CSV (absent in older bundles). */
+  index?: { url: string; fields: string[] };
+  owners: { url: string; shard_hex: number; item_fields: string[]; max_items: number; agent_addr_keys?: number[] };
 }
 
 /** Attributes carried in the vector tiles (short keys, see pipeline/pa2/config.py TILE_FIELDS). */
@@ -263,6 +263,14 @@ export interface AppState {
   ownerGroup: OwnerGrouping;
   /** Search results shown on the map (not saved between visits). */
   search: SearchSet | null;
+  /** The owner whose profile is open: the map spotlights that group's parcels. */
+  ownerFocus: OwnerRef | null;
+}
+
+/** An owner group: an owner name (n, name key), a shared mailing address (a, address key), or a lone parcel (p, its id). */
+export interface OwnerRef {
+  kind: 'n' | 'a' | 'p';
+  id: number | string;
 }
 
 /** One owner group among the parcels in view (see MapController.computeStats). */
