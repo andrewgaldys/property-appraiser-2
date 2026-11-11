@@ -1,5 +1,5 @@
-import { COUNTY_META, MIXED_USE_CODE, RESIDENTIAL_CLASSES } from '../config';
-import { int, money, moneyFull, psf, ratio, saleDate, signedPct, yearBuilt } from '../format';
+import { COUNTY_META, MIXED_USE_CODE, RESIDENTIAL_CLASSES, UNDERBUILT } from '../config';
+import { int, money, moneyFull, psf, ratio, saleDate, signedPct, titleCase, yearBuilt } from '../format';
 import { nominalMax } from '../map/layers';
 import type { Manifest, ParcelRecord, Portfolio, PortfolioItem, TileProps } from '../types';
 
@@ -177,7 +177,15 @@ export function coverageDetail(m: Manifest): string {
 export function signals(r: ParcelRecord, m: Manifest): string[] {
   const out: string[] = [];
   const st = (r.owner_state || '').trim().toUpperCase();
-  if (st && st !== 'FL') out.push(`Out-of-state owner (${st})`);
+  if (r.out_of_area === 2 || (r.out_of_area === undefined && st && st !== 'FL')) out.push(`Out-of-state owner (${st})`);
+  else if (r.out_of_area === 1) out.push(`Owner mails from another county${r.owner_city ? ` (${titleCase(r.owner_city)})` : ''}`);
+  if (r.estate_trust) out.push('Estate / trust owned');
+  if (r.small_portfolio) out.push('Small portfolio owner');
+  if (
+    !isNominal(r.just_value, m) && r.bldg_to_land_ratio != null && r.bldg_to_land_ratio <= UNDERBUILT.maxBtl &&
+    (r.lnd_sqfoot ?? 0) >= UNDERBUILT.minLotAc * 43560
+  )
+    out.push('Underbuilt site');
   if (!isNominal(r.just_value, m) && has(r.building_value) && (r.land_to_value_ratio ?? 0) >= 0.6)
     out.push(`Land-heavy: ${Math.round((r.land_to_value_ratio ?? 0) * 100)}% of value in land`);
   const hold = holdInfo(r, m);

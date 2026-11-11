@@ -9,11 +9,12 @@ A Python pipeline pulls the parcels from the Florida Statewide Cadastral layer (
 - Every parcel is outlined: class-colored strokes in 2D, and a light **roof rim** on each 3D block. House numbers and building SF label parcels from zoom 15.
 - Hover tooltip: assessed market value, site address, property type, owner, county, building SF, units (multifamily and mixed use only) and years held.
 - **Satellite**: a spyglass lens around the cursor (zoom 14+, toggle with `S`), a Map / Hybrid / Split basemap switch, and a live aerial of the selected parcel in the drawer.
-- **Owners & parcels tables** (under the map): every parcel matching the screen and search, across all three counties or only the map view, grouped into owners with related entities, parcel counts, value, building SF, asset classes, longest and average hold, and mailing address. Sortable, linked to the map both ways, and exportable to CSV for a CRM or mail merge.
+- **Prospecting screens**: five presets a broker can mix (long-term holders, underbuilt sites, out-of-area owners, small portfolio owners, estate / trust owned) on top of every other filter; named **saved screens**; and a page link that always reopens the exact screen.
+- **Owners & parcels tables** (under the map): every parcel matching the screen and search, across all three counties or only the map view, grouped into owners with related entities, parcel counts, value, building SF, asset classes, prospecting signals, longest and average hold, and mailing address. Sortable, linked to the map both ways, and exportable to CSV for a CRM or mail merge.
 - **Owner profiles**: everything an owner holds in the three counties, a mini map, an acquisition timeline (last priced sale of each parcel), average hold, asset-class mix, mailing addresses and related entities; CSV export of the holdings.
 - **Search** (top-left of the map, or press `/`): owner names, site addresses, cities, parcel IDs (dashed or not), property types and shared mailing addresses. Results come back grouped as owners, mailing addresses and parcels; pick one parcel to fly to it, or show an owner, a mailing address or every match on the map as a removable filter.
 - **Top owners in view**: who controls the parcels on screen, after filters, ranked by assessed value, with each owner's share and the top five's combined share (ownership concentration). Group by owner name, or by mailing address to see the sponsor behind single-asset LLCs. Click an owner to open their most valuable parcel and spotlight the portfolio.
-- **Sidebar** in collapsible sections (Top owners, County, Markets, Asset class, Screens, Display) under the live **In view** totals. Screens: minimum years held, minimum lot size, maximum building-to-land value, and whether nominal-value parcels count. Explanations sit behind ⓘ buttons.
+- **Sidebar** in collapsible sections (Top owners, Prospecting, County, Markets, Asset class, Screens, Display) under the live **In view** totals. Screens: minimum years held, minimum lot size, maximum building-to-land value, and whether nominal-value parcels count. Explanations sit behind ⓘ buttons.
 - **Applied filters** show as removable chips over the map, with *Reset all*. The legend collapses to a button (and steps aside on its own while the drawer needs the room). A one-time hint suggests where to start.
 - **Property drawer**, most decision-relevant first: address, asset class and use, then assessed market value, building SF, lot, residential units, last sale, years held and owner; then the aerial, value and building details, sale and hold, and the **true-owner portfolio** across all three counties (matched on normalized owner name *or* mailing address). Identifiers and legal text fold into *More details*; empty fields are left out.
 - One-click, print-styled **Property Brief** (Letter, Save as PDF) with a 3D view and an aerial, plus shareable parcel links (`#…&p=<parcel id>`).
@@ -225,6 +226,43 @@ The search box sits at the top-left of the map (`/` focuses it from anywhere). I
 - **Keyboard:** ↑/↓ to move, Enter to pick (the first row by default), Esc to close.
 - **Index.** Search reads `index.json`, the same parcel table the results use (see below), plus the shared mailing addresses. The map filter uses a `match` expression on parcel IDs, which MapLibre compiles to a lookup table.
 
+## Prospecting screens
+
+The sidebar's **Prospecting** section holds five preset screens. Turn on any mix: they combine with each other (a parcel must pass all of them) and with every other filter, the search and the map view. Each preset's ⓘ gives its exact rule in plain language, and an active preset shows as a chip over the map like any other filter.
+
+| Preset | A parcel matches when | Based on |
+|---|---|---|
+| Long-term holders | Its last sale of $100+ is 15 or more years old (2011 or earlier), or no such sale is on record since at least then (a minimum, "N+ yrs") | County sale records, complete from 1969 (Palm Beach), 1972 (St. Lucie) and 1977 (Martin). Parcels with no sale on record are left out: an unknown hold is not a long one. |
+| Underbuilt sites | Building value is at most 0.5× the land value, on a lot of 0.5 acre or more. Vacant land counts; nominal-value parcels never do. | Just value and land value on the 2026 roll |
+| Out-of-area owners | The owner's mailing address is out of state, or in another Florida county | The roll's owner mailing address. Florida ZIPs (else cities) are placed in a county by this dataset's own parcels with that site ZIP, so a ZIP that crosses a county line can be misplaced; a Florida ZIP with no parcels here counts as another county. |
+| Small portfolio owners | The owner name holds 2 to 10 parcels across the three counties, all in one asset class | Owner-name groups (`owner_name_key`), not mailing addresses |
+| Estate / trust owned | The owner name reads as a trust or an estate: TRUST, TRUSTEE, TR, ESTATE OF, HEIRS, REVOCABLE… | The name alone. REITs, banks and trust companies, and real-estate firms are excluded; land trusts are included. |
+
+- Thresholds: `LONG_HOLD_YEARS` and `UNDERBUILT` in web/src/config.ts; `SMALL_PORTFOLIO` in pipeline/pa2/config.py. The rules run twice, identically: as a MapLibre filter (web/src/map/layers.ts) and over `index.json` for the tables (web/src/results.ts).
+- The Owners table's **Signals** column lists the flags found on each owner's matching parcels (out of state or other Florida county, estate / trust, small portfolio); sorting it puts owners with the most signals first.
+
+**Saved screens.** *Save this screen* names and stores the filters, presets, search, owner grouping, color and height modes, the table (open, tab, scope) and the map view. Clicking a saved screen puts all of that back; × asks before deleting, and saving under an existing name replaces it.
+Screens live in this browser's localStorage (`pa2.screens.v1`) for now. `ScreenRepository` in web/src/screens.ts is the only storage seam, so a shared backend can replace `LocalScreenRepository` without touching the interface.
+
+**Shareable links.** The page link always describes the current screen: *Copy link* (or the address bar) shares it, and opening it, or pasting it into an open tab, restores the screen. Keys that hold their default are left out.
+
+| Key | Meaning |
+|---|---|
+| `map` | `zoom/lat/lng[/bearing/pitch]` (MapLibre's own) |
+| `co` | counties: `53` Martin, `66` St. Lucie, `60` Palm Beach |
+| `cl` | asset classes, e.g. `MF10,COM` |
+| `hold`, `lot`, `btl` | minimum years held, minimum lot (acres), maximum building / land value |
+| `nom` | `1` counts nominal-value parcels |
+| `pre` | presets: `long`, `underbuilt`, `outside`, `small`, `trust` |
+| `q` | search: `q:<text>`, `owner:<owner name>` or `mail:<mailing address>`, rebuilt from the data on open |
+| `g` | `addr` groups owners by mailing address |
+| `x`, `c` | height and color modes |
+| `t`, `sc` | open table (`owners` or `parcels`) and `view` for the map-view scope |
+| `p`, `o` | open parcel; open owner profile |
+
+MapLibre rewrites the hash, decoding it, on every map move, so values keep to characters that survive that: a space is written `+` and other special characters `~XX` ("E&J STORAGE TRUST" is `owner:E~26J+STORAGE+TRUST`).
+A linked search that no longer matches anything, or now matches more than 10,000 parcels, opens the screen without it and says so.
+
 ## Owners & parcels tables
 
 A bar along the bottom of the map opens two tables of the current screen's results: every parcel that matches the filters, screens and search, in all three counties (**All matching**) or only inside the current view (**In map view**). The sidebar's *See matching owners* button opens it too.
@@ -232,14 +270,14 @@ The tables run on `index.json` in the browser and use exactly the map's filter r
 
 - **Owners**: one row per owner group, with the grouping set by Top owners' *By name / By address* toggle. **By name** groups the normalized owner name. **By address** groups the normalized mailing address, which shows the sponsor behind single-asset LLCs.
   - Registered-agent and manager addresses never form an owner group; their parcels fall back to the owner name. These are the 11 addresses shared by 25 or more owner names, listed as `owners.agent_addr_keys` in the manifest.
-  - Columns: owner, related entities, parcels (matching, of the owner's total), assessed value, building SF, asset classes, longest hold, average hold and mailing address. Related entities are other owner names at a shared mailing address, one hop and agent addresses excluded; they are shown for context and never added into the row's totals.
+  - Columns: owner, related entities, parcels (matching, of the owner's total), assessed value, building SF, asset classes, signals, longest hold, average hold and mailing address. Related entities are other owner names at a shared mailing address, one hop and agent addresses excluded; they are shown for context and never added into the row's totals.
   - **Longest hold** shows minimums as "57+". **Average hold** counts exact holds only and says how many it used, e.g. "10 yrs, 50 of 54".
 - **Parcels**: address, class, assessed value (or "Nominal"), building SF, lot, last sale (price and date, or "Not on record"), years held, owner and mailing address.
 - **Sorting**: click a column header; click again to reverse.
 - **Linked to the map**: clicking an owner row opens the owner profile and spotlights the group's parcels. Clicking a parcel row flies to the parcel and opens it. Selecting a parcel on the map highlights its row in both tables.
 - **Export CSV** downloads the open table in its current sort, as UTF-8 with a BOM so Excel opens it correctly. Missing values are left blank, never zero. Text that a spreadsheet would run as a formula is escaped.
-  - **Owners columns:** Owner name, Related entities, Matching parcels, Total parcels (all 3 counties), Assessed market value, Building SF, Residential units, Asset classes, Longest hold, Average hold; then Mailing address 1 and 2, city, state and ZIP as separate columns for mail merge; then Other mailing addresses, Largest property and Grouped by.
-  - **Parcels columns:** Parcel ID (county format), County, Site address, City, ZIP, Asset class, Property use, Assessed market value, Nominal-value flag, Building SF, Lot acres and SF, Residential units, Year built, Last sale date and price, Years held, Owner name, the split mailing address plus a one-line version, Latitude, Longitude, and a Link back to the parcel in the app.
+  - **Owners columns:** Owner name, Related entities, Matching parcels, Total parcels (all 3 counties), Assessed market value, Building SF, Residential units, Asset classes, Longest hold, Average hold; then Mailing address 1 and 2, city, state and ZIP as separate columns for mail merge; then Other mailing addresses, Out-of-area owner (out of state or other Florida county), Estate or trust, Small portfolio owner, Largest property and Grouped by.
+  - **Parcels columns:** Parcel ID (county format), County, Site address, City, ZIP, Asset class, Property use, Assessed market value, Nominal-value flag, Building SF, Lot acres and SF, Residential units, Year built, Last sale date and price, Years held, Owner name, the split mailing address plus a one-line version, Out-of-area owner, Estate or trust, Small portfolio owner, Latitude, Longitude, and a Link back to the parcel in the app.
 
 ## Owner profiles
 
@@ -300,6 +338,9 @@ Derived fields (pipeline/pa2/schema.py):
 | `residential_units` | `NO_RES_UNTS` on multifamily and mixed-use (DOR 012) parcels, else null; tiles carry it as `u` |
 | `nominal_value` | `JV` below `--nominal-value-max` (parquet only; the frontend compares `jv` with the manifest's `data_quality.nominal_value_max`) |
 | `last_sale_qualified` | `true` for FDOR code 01 or a Palm Beach `Q*` validity code, `false` for 11+ or `D*` / `U*`, otherwise null (raw code kept) |
+| `out_of_area` | `2` when the owner's mailing state is not FL; `1` when it is FL and the mailing ZIP (else city) belongs to another county, judged by this dataset's own parcels with that site ZIP (city); unknown with no ZIP or city. Tiles and index carry it as `oa` (pipeline/pa2/publish.py `prospect_flags`) |
+| `small_portfolio` | `1` when the parcel's owner-name group has 2–10 parcels, all in one asset class (`spf`) |
+| `estate_trust` | `1` when the owner name reads as a trust or an estate (`estate_trust` in pipeline/pa2/publish.py; `et`) |
 | `tot_lvg_area` | `TOT_LVG_AR`; values under 10 SF are treated as not reported. The 2026 roll carries `1` on ~7k improved office, warehouse and retail parcels. |
 
 Other asset classes appear when their codes are fetched: Single Family 001, Condo 004–005, other residential 000, 002, 006–009, and 050–099.
@@ -329,3 +370,5 @@ This creates `pa2_parcels` (indexed), the view `pa2_owner_portfolios` and the fu
 - Last-sale prices are as recorded: a deed covering several parcels may carry the whole package's price on each of them.
 - Condo units (004) and individual mobile homes (002) are excluded by default; see the opt-in flags.
 - Not yet included: comps and fuzzy/Sunbiz entity matching. Search matches word beginnings, not misspellings.
+- Saved screens stay in the browser that saved them until a backend replaces `LocalScreenRepository`; share a screen with its link.
+- Prospecting flags read names and mailing addresses as the roll publishes them: a trust owned through an LLC is not flagged, and a local owner who mails tax bills to an out-of-state office is.

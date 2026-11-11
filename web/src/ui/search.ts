@@ -2,9 +2,9 @@ import { CLASS_COLORS, CLASS_FALLBACK } from '../config';
 import type { DataStore } from '../data';
 import { clear, h, icon, type Child } from '../dom';
 import { int, money, titleCase } from '../format';
-import { rowsBbox, search, type SearchIndex, type SearchResults, type SearchRow } from '../search';
+import { MAX_SET, rowsBbox, search, type SearchIndex, type SearchResults, type SearchRow } from '../search';
 import type { Store } from '../state';
-import type { AppState, Manifest, SearchSet } from '../types';
+import type { AppState, Manifest, SearchSet, SearchSpec } from '../types';
 import { isNominal } from './facts';
 
 export interface SearchHandlers {
@@ -14,8 +14,6 @@ export interface SearchHandlers {
   onSelectParcel(pid: string): void;
 }
 
-/** Larger sets would make the map filter heavy; the menu asks for another word instead. */
-const MAX_SET = 10_000;
 const SHOW = { owners: 5, mailing: 3, parcels: 8 };
 
 interface Option {
@@ -215,7 +213,7 @@ export class SearchBox {
       if (total <= MAX_SET)
         this.option(
           'sm-all',
-          () => this.showSet(res.all, `“${res.query}”`),
+          () => this.showSet(res.all, `“${res.query}”`, { kind: 'query', q: res.query }),
           h('span', { class: 'sm-main' }, h('span', { class: 'sm-title' }, `Show all ${int(total)} matches on the map`)),
           h('kbd', { class: 'sm-enter', 'aria-hidden': 'true' }, '↵'),
         );
@@ -229,7 +227,7 @@ export class SearchBox {
           'sm-owner',
           () =>
             o.key != null && o.count > 1
-              ? this.showSet(this.index!.rows.filter((r) => r.onk === o.key), `Owner: ${o.name}`)
+              ? this.showSet(this.index!.rows.filter((r) => r.onk === o.key), `Owner: ${o.name}`, { kind: 'owner', name: o.name })
               : this.pick(o.top.pid),
           h(
             'span',
@@ -246,7 +244,7 @@ export class SearchBox {
       this.group('Mailing addresses', res.mailing.length);
       for (const m of res.mailing.slice(0, SHOW.mailing)) {
         const sub = [
-          `${int(m.count)} parcels`,
+          `${int(m.count)} ${m.count === 1 ? 'parcel' : 'parcels'}`,
           m.group.names > 1 ? `${int(m.group.names)} owner names` : null,
           m.group.agent ? 'likely an agent or manager address' : null,
         ]
@@ -254,7 +252,11 @@ export class SearchBox {
           .join(' · ');
         this.option(
           'sm-mail',
-          () => this.showSet(this.index!.rows.filter((r) => r.oak === m.group.key), `Mailing address: ${m.group.label}`),
+          () =>
+            this.showSet(this.index!.rows.filter((r) => r.oak === m.group.key), `Mailing address: ${m.group.label}`, {
+              kind: 'mail',
+              label: m.group.label,
+            }),
           h('span', { class: 'sm-main' }, h('span', { class: 'sm-title' }, m.group.label), h('span', { class: 'sm-sub' }, sub)),
           h('span', { class: 'sm-val' }, money(m.jv)),
         );
@@ -318,7 +320,7 @@ export class SearchBox {
     this.handlers.onSelectParcel(pid);
   }
 
-  private showSet(rows: SearchRow[], label: string): void {
+  private showSet(rows: SearchRow[], label: string, spec: SearchSpec): void {
     const pids = [...new Set(rows.map((r) => r.pid))];
     if (pids.length === 1) {
       this.pick(pids[0]!);
@@ -326,7 +328,13 @@ export class SearchBox {
     }
     this.close();
     this.input.blur();
-    this.handlers.onShowSet({ label, pids, bbox: rowsBbox(rows) });
+    this.handlers.onShowSet({ label, pids, bbox: rowsBbox(rows), spec });
+    this.syncClear();
+  }
+
+  /** Show what a restored search was (from a link or a saved screen). */
+  setText(text: string): void {
+    this.input.value = text;
     this.syncClear();
   }
 }

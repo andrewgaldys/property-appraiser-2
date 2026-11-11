@@ -21,27 +21,60 @@ import { FirstVisitHint } from './ui/hint';
 import { Legend } from './ui/legend';
 import { OwnerProfile } from './ui/ownerProfile';
 import { OwnersPanel } from './ui/owners';
+import { ProspectingPanel } from './ui/prospecting';
 import { ResultsPanel } from './ui/results';
 import { SearchBox } from './ui/search';
 import { ownerRefOf } from './results';
+import { LocalScreenRepository, SCREEN_KEYS, paramsScreen, screenParams, type ScreenState } from './screens';
+import { MAX_SET, resolveSearch } from './search';
 import { Toolbar } from './ui/toolbar';
 import { Tooltip } from './ui/tooltip';
 
 // ---- URL hash: MapLibre owns `map=`, we own `p=` (selected parcel) ----------------
+/**
+ * Hash values must survive MapLibre's own hash updates, which re-serialize the whole hash and
+ * percent-decode it on every map move (a raw "&" or "+" would then split or change a value). So
+ * values use only characters that come through that unchanged: letters, digits, -_.!*'() , : /,
+ * "+" for a space and "~XX" for every other byte.
+ */
+function encodeHashValue(v: string): string {
+  return encodeURIComponent(v)
+    .replace(/~/g, '%7E')
+    .replace(/%2C/g, ',')
+    .replace(/%3A/g, ':')
+    .replace(/%2F/g, '/')
+    .replace(/%20/g, '+')
+    .replace(/%/g, '~');
+}
+
+function decodeHashValue(v: string): string {
+  try {
+    return decodeURIComponent(v.replace(/\+/g, ' ').replace(/~(?=[0-9A-Fa-f]{2})/g, '%'));
+  } catch {
+    return v;
+  }
+}
+
 function hashParam(key: string): string | null {
   for (const part of window.location.hash.slice(1).split('&')) {
     const i = part.indexOf('=');
-    if (i > 0 && part.slice(0, i) === key) return decodeURIComponent(part.slice(i + 1));
+    if (i > 0 && part.slice(0, i) === key) return decodeHashValue(part.slice(i + 1));
   }
   return null;
 }
 
 function setHashParam(key: string, value: string | null): void {
+  setHashParams({ [key]: value });
+}
+
+/** Set several hash params in one history entry replace (null removes); other params are kept. */
+function setHashParams(values: Record<string, string | null | undefined>): void {
+  const keys = new Set(Object.keys(values));
   const parts = window.location.hash
     .slice(1)
     .split('&')
-    .filter((p) => p && !p.startsWith(`${key}=`));
-  if (value) parts.push(`${key}=${encodeURIComponent(value)}`);
+    .filter((p) => p && !keys.has(p.split('=')[0]!));
+  for (const [k, v] of Object.entries(values)) if (v) parts.push(`${k}=${encodeHashValue(v)}`);
   const url = `${window.location.pathname}${window.location.search}${parts.length ? `#${parts.join('&')}` : ''}`;
   window.history.replaceState(window.history.state, '', url);
 }
@@ -72,6 +105,8 @@ async function boot(): Promise<void> {
     return;
   }
 
+  // A link that carries a screen (filters, presets, search, grouping, table) wins over this browser's last view.
+  const linked = paramsScreen(hashParam);
   const store = new Store<AppState>({
     filters: { ...DEFAULT_FILTERS },
     extrude: 'value',
@@ -84,6 +119,9 @@ async function boot(): Promise<void> {
     search: null,
     ownerFocus: null,
     ...loadSavedView(),
+    ...(linked
+      ? { filters: linked.filters, ownerGroup: linked.ownerGroup, extrude: linked.extrude ?? 'value', shade: linked.shade ?? 'class' }
+      : {}),
   });
   store.subscribe((s, prev) => {
     if (
@@ -174,10 +212,20 @@ async function boot(): Promise<void> {
     },
   });
   document.querySelector('#filters .inview')?.after(owners.el);
+
+  // Prospecting presets + saved screens, right under Top owners.
+  const prospecting = new ProspectingPanel(manifest, store, new LocalScreenRepository(), {
+    capture: () => captureScreen(true),
+    apply: (state) => applyScreen(state, true),
+    copyLink: () => copyLink('Link to this screen copied'),
+  });
+  owners.el.after(prospecting.el);
   const legend = new Legend(mapEl, manifest, store);
 
   // Owners & parcels tables under the map: every matching parcel, grouped into owners.
   const RESULTS_BAR = 46;
+  /** True while a link or saved screen sets the table: the map keeps its (linked) center. */
+  let restoring = false;
   const results = new ResultsPanel(manifest, data, store, {
     onOpenOwner: (ref) => void openOwner(ref),
     onSelectParcel: (pid) => void select(pid, { fly: true }),
@@ -187,9 +235,10 @@ async function boot(): Promise<void> {
       const phone = window.matchMedia('(max-width: 720px)').matches;
       const h = phone ? RESULTS_BAR : Math.round(px);
       mapEl.style.setProperty('--results-h', `${h}px`);
-      mapc.setBottomInset(h);
+      mapc.setBottomInset(h, restoring);
     },
     viewBbox: () => mapc.viewBbox(),
+    onStateChange: () => writeScreenHash(),
   });
   mapEl.append(results.el);
   mapEl.style.setProperty('--results-h', `${RESULTS_BAR}px`);
@@ -350,6 +399,84 @@ async function boot(): Promise<void> {
     setHashParam('o', null);
   }
 
+  // ---- Screens: the link always describes the current screen; saved screens and links restore it ----
+
+  function captureScreen(withView: boolean): ScreenState {
+    const s = store.get();
+    const c = mapc.map.getCenter();
+    return {
+      filters: s.filters,
+      search: s.search?.spec ?? null,
+      ownerGroup: s.ownerGroup,
+      extrude: s.extrude,
+      shade: s.shade,
+      results: results.getState(),
+      ...(withView
+        ? { view: { center: [c.lng, c.lat] as [number, number], zoom: mapc.map.getZoom(), bearing: mapc.map.getBearing(), pitch: mapc.map.getPitch() } }
+        : {}),
+    };
+  }
+
+  function writeScreenHash(): void {
+    const p = screenParams(captureScreen(false));
+    setHashParams(Object.fromEntries(SCREEN_KEYS.map((k) => [k, p[k] ?? null])));
+  }
+
+  /** Put a screen back: filters, search (rebuilt from the data), grouping, table, and the saved map view. */
+  function applyScreen(state: ScreenState, fly: boolean): void {
+    store.set({
+      filters: state.filters,
+      ownerGroup: state.ownerGroup,
+      extrude: state.extrude ?? store.get().extrude,
+      shade: state.shade ?? store.get().shade,
+      search: null,
+    });
+    searchBox.setText('');
+    if (state.search) void restoreSearch(state.search);
+    if (state.results) restoreResults(state.results);
+    if (fly && state.view) mapc.map.flyTo({ ...state.view, duration: 1400, essential: true });
+    writeScreenHash();
+  }
+
+  function restoreResults(st: NonNullable<ScreenState['results']>): void {
+    restoring = true;
+    try {
+      results.applyState(st);
+    } finally {
+      restoring = false;
+    }
+  }
+
+  async function restoreSearch(spec: ScreenState['search']): Promise<void> {
+    if (!spec) return;
+    const ix = await data.parcelIndex().catch(() => null);
+    const r = ix ? resolveSearch(ix, spec) : null;
+    if (!r?.set) {
+      toast(
+        !r
+          ? 'Search is unavailable right now, so the screen opened without its search.'
+          : r.count
+            ? `The search matches ${r.count.toLocaleString('en-US')} parcels, more than the ${MAX_SET.toLocaleString('en-US')} the map can show at once, so the screen opened without it.`
+            : 'The search no longer matches any parcel, so the screen opened without it.',
+      );
+      return;
+    }
+    store.set({ search: r.set });
+    searchBox.setText(spec.kind === 'query' ? spec.q : spec.kind === 'owner' ? spec.name : spec.label);
+  }
+
+  store.subscribe((s, prev) => {
+    if (
+      s.filters !== prev.filters || s.search !== prev.search || s.ownerGroup !== prev.ownerGroup ||
+      s.extrude !== prev.extrude || s.shade !== prev.shade
+    ) writeScreenHash();
+  });
+  if (linked) {
+    if (linked.search) void restoreSearch(linked.search);
+    if (linked.results?.open || linked.results?.scope === 'view') restoreResults(linked.results);
+  }
+  writeScreenHash();
+
   /** "o=n.<parcel id>": the owner-name (n), mailing-address (a) or single-parcel (p) group of that parcel. */
   async function openOwnerFromHash(value: string, fit: boolean): Promise<void> {
     const [kind, pid] = value.split('.');
@@ -388,6 +515,9 @@ async function boot(): Promise<void> {
 
   // A parcel or owner link pasted into an already-open tab only changes the hash: follow it.
   window.addEventListener('hashchange', () => {
+    // A pasted screen link: apply it if it differs from what is on screen (no map needed for this).
+    const pasted = paramsScreen(hashParam);
+    if (pasted && JSON.stringify(screenParams(pasted)) !== JSON.stringify(screenParams(captureScreen(false)))) applyScreen(pasted, false);
     if (!mapc.isReady) return;
     const pid = hashParam('p');
     const cur = store.get().selection?.pid ?? null;

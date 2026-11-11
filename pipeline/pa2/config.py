@@ -69,6 +69,9 @@ TILE_FIELDS: dict[str, str] = {
     "hold_floor_years": "hf",
     "owner_name_key": "onk",
     "owner_addr_key": "oak",
+    "out_of_area": "oa",
+    "small_portfolio": "spf",
+    "estate_trust": "et",
 }
 
 # The centroid-dot layer covers whole counties per tile at low zoom, so it carries only what the
@@ -76,7 +79,7 @@ TILE_FIELDS: dict[str, str] = {
 POINT_FIELDS: list[str] = [
     "parcel_id", "county_code", "asset_class", "use_code", "just_value", "tot_lvg_area", "lnd_sqfoot",
     "residential_units", "hold_period_years", "hold_floor_years", "land_to_value_ratio", "bldg_to_land_ratio",
-    "owner_name_key", "owner_addr_key",
+    "owner_name_key", "owner_addr_key", "out_of_area", "small_portfolio", "estate_trust",
 ]
 
 # Columns stored per parcel in parcels/<shard>.json (row arrays, in this order).
@@ -121,6 +124,9 @@ DETAIL_FIELDS: list[str] = [
     "sales_from",
     "owner_name_key",
     "owner_addr_key",
+    "out_of_area",
+    "small_portfolio",
+    "estate_trust",
     "legal_desc",
     "tax_roll_year",
     "lon",
@@ -144,6 +150,10 @@ OWNER_ITEM_FIELDS: list[str] = [
     "lon",
     "lat",
 ]
+
+# Prospecting presets (frontend web/src/config.ts PRESETS): an owner-name group of this many parcels,
+# all in one asset class, is a "small portfolio owner".
+SMALL_PORTFOLIO = (2, 10)
 
 # A portfolio list stores at most this many cards; the total count is always exact.
 PORTFOLIO_MAX_ITEMS = 500

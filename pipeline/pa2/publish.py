@@ -27,6 +27,7 @@ from .config import (
     AS_OF_YEAR,
     COUNTIES,
     DETAIL_FIELDS,
+    SMALL_PORTFOLIO,
     NOMINAL_VALUE_MAX,
     OUT_DIR,
     OWNER_ITEM_FIELDS,
@@ -56,6 +57,7 @@ _ARTIFACT_FILES = ("manifest.json", "parcels.pmtiles", "points.pmtiles", "parcel
 INDEX_FIELDS = [
     "pid", "co", "cls", "uc", "addr", "city", "zip", "own", "jv", "sf", "lot", "u", "yb", "btl",
     "sp", "sy", "sm", "hold", "hf", "sfrom", "onk", "oak", "ma1", "ma2", "mcity", "mst", "mzip", "lon", "lat",
+    "oa", "spf", "et",
 ]
 _ARTIFACT_DIRS = ("parcels", "owners")
 
@@ -149,7 +151,8 @@ def parcel_index(records: list[dict], addrs_idx: dict[int, dict]) -> dict:
          r["last_sale_price"], r["last_sale_year"], r["last_sale_month"], r["hold_period_years"],
          r["hold_floor_years"], r["sales_from"], r["owner_name_key"], r["owner_addr_key"],
          r["owner_addr1"] or "", r["owner_addr2"] or "", mcity_ix.get(r["owner_city"], -1), r["owner_state"] or "",
-         r["owner_zip"] or "", round(r["lon"], 5), round(r["lat"], 5)]
+         r["owner_zip"] or "", round(r["lon"], 5), round(r["lat"], 5),
+         r["out_of_area"], r["small_portfolio"], r["estate_trust"]]
         for r in records
     ]
     mailing = [[k, e["label"], e.get("names", 0), 1 if e.get("agent") else 0] for k, e in sorted(addrs_idx.items())]
@@ -160,6 +163,68 @@ def parcel_index(records: list[dict], addrs_idx: dict[int, dict]) -> dict:
         "rows": rows,
         "mailing": {"fields": ["key", "label", "names", "agent"], "rows": mailing},
     }
+
+
+_TRUST = re.compile(r"\b(TRUSTS?|TRUSTEES?|TTEES?|TRS?|REVOCABLE|IRREVOCABLE|ESTATE|EST OF|HEIRS)\b")
+# Business trusts and companies that only contain the words: REITs, banks, real-estate firms.
+_NOT_ESTATE = re.compile(r"\b(REAL ESTATE|REALTY TRUST|INVESTMENT TRUST|REIT|BANK(ING)? (&|AND) TRUST|TRUST BANK|TRUST CO(MPANY)?)\b")
+_CORP = re.compile(r"\b(LLC|L L C|INC|CORP|CORPORATION|CO|COMPANY|LP|LLP|LLLP|LTD|PA|PLLC|PARTNERSHIP|ASSOCIATION|ASSN)\b")
+_TRUSTEE = re.compile(r"\b(TRUSTEES?|TTEES?)\b")
+
+
+def estate_trust(name: str | None) -> bool:
+    """Owner names that read as a trust or an estate: SMITH JOHN TR, ESTATE OF ..., ACME LAND TRUST.
+
+    Names whose only trust words are a business trust (REALTY TRUST, BANK & TRUST, REAL ESTATE) do not
+    count, nor companies (LLC, INC, LP ...) unless a trustee is named. Land trusts are included.
+    """
+    s = (name or "").upper()
+    if not _TRUST.search(s) or not _TRUST.search(_NOT_ESTATE.sub(" ", s)):
+        return False
+    return not (_CORP.search(s) and not _TRUSTEE.search(s))
+
+
+def prospect_flags(records: list[dict]) -> dict:
+    """Per-parcel flags behind the prospecting presets; returns counts for the log and manifest.
+
+    out_of_area: 2 when the owner's mailing state is not Florida; 1 when it is Florida but outside the
+    parcel's county. Mailing ZIPs (else cities) are placed in a county by where this dataset's own
+    parcels with that site ZIP (city) are; a Florida ZIP or city with no parcels here is outside all
+    three counties. Approximate where a ZIP straddles a county line.
+    """
+    zips: dict[str, dict[int, int]] = defaultdict(lambda: defaultdict(int))
+    cities: dict[str, dict[int, int]] = defaultdict(lambda: defaultdict(int))
+    for r in records:
+        if r["site_zip"]:
+            zips[r["site_zip"]][r["county_code"]] += 1
+        if r["site_city"]:
+            cities[r["site_city"].upper()][r["county_code"]] += 1
+    zip_county = {z: max(c, key=c.get) for z, c in zips.items()}
+    city_county = {k: max(c, key=c.get) for k, c in cities.items()}
+    groups: dict[int, list[dict]] = defaultdict(list)
+    for r in records:
+        if r["owner_name_key"] is not None:
+            groups[r["owner_name_key"]].append(r)
+    small = {k for k, g in groups.items() if SMALL_PORTFOLIO[0] <= len(g) <= SMALL_PORTFOLIO[1] and len({x["asset_class"] for x in g}) == 1}
+    counts = {"out_of_state": 0, "out_of_county": 0, "small_portfolio": 0, "estate_trust": 0}
+    for r in records:
+        st = r.get("owner_state") or ""
+        oa = None
+        if st and st != "FL":
+            oa = 2
+        elif st == "FL":
+            mzip, mcity = (r.get("owner_zip") or "")[:5], (r.get("owner_city") or "").upper()
+            if mzip or mcity:  # no ZIP and no city: unknown, never "another county"
+                home = zip_county.get(mzip) or city_county.get(mcity)
+                oa = 1 if home != r["county_code"] else None
+        r["out_of_area"] = oa
+        r["small_portfolio"] = 1 if r["owner_name_key"] in small else None
+        r["estate_trust"] = 1 if estate_trust(r.get("owner_name")) else None
+        counts["out_of_state"] += oa == 2
+        counts["out_of_county"] += oa == 1
+        counts["small_portfolio"] += r["small_portfolio"] is not None
+        counts["estate_trust"] += r["estate_trust"] is not None
+    return counts
 
 
 def clean_out_dir(out_dir: Path) -> None:
@@ -217,6 +282,8 @@ def publish(
     name_groups, addr_groups, addr_meta = assign_owner_keys(records)
     names_idx, addrs_idx = build_owner_index(name_groups, addr_groups, addr_meta, OWNER_ITEM_FIELDS)
     log(f"  owners: {len(names_idx):,} multi-parcel names, {len(addrs_idx):,} shared mailing addresses")
+    flags = prospect_flags(records)
+    log("  prospecting flags: " + ", ".join(f"{k} {v:,}" for k, v in flags.items()))
 
     clean_out_dir(out_dir)
 

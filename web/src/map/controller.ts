@@ -365,15 +365,23 @@ export class MapController {
 
   private bottomInset = 0;
 
-  /** Reserve `px` at the bottom for the results table (same idea as setRightInset). */
-  setBottomInset(px: number): void {
+  /**
+   * Reserve `px` at the bottom for the results table (same idea as setRightInset). Opening the
+   * table by hand keeps what is on screen; restoring a link or saved screen passes keepCenter so
+   * the linked center lands in the middle of the visible map instead of drifting on each reload.
+   */
+  setBottomInset(px: number, keepCenter = false): void {
     if (px === this.bottomInset) return;
-    const cv = this.map.getCanvas();
     const { top = 0, left = 0, right = 0 } = this.map.getPadding();
-    const x = left + (cv.clientWidth - left - right) / 2;
-    const y = top + (cv.clientHeight - top - px) / 2;
-    const center = this.map.unproject([x, y]);
-    this.map.jumpTo({ center, padding: { top, left, right, bottom: px } });
+    if (keepCenter) {
+      this.map.jumpTo({ padding: { top, left, right, bottom: px } });
+    } else {
+      const cv = this.map.getCanvas();
+      const x = left + (cv.clientWidth - left - right) / 2;
+      const y = top + (cv.clientHeight - top - px) / 2;
+      const center = this.map.unproject([x, y]);
+      this.map.jumpTo({ center, padding: { top, left, right, bottom: px } });
+    }
     this.bottomInset = px;
   }
 

@@ -1,4 +1,4 @@
-import { BTL_STEPS, CLASS_BADGE, COUNTY_META, LOT_STEPS_AC } from './config';
+import { BTL_STEPS, CLASS_BADGE, COUNTY_META, LONG_HOLD_YEARS, LOT_STEPS_AC, UNDERBUILT } from './config';
 import { parcelId } from './format';
 import { mailingLine, type IndexRow, type ParcelIndex } from './parcelIndex';
 import type { Bbox, Filters, OwnerGrouping, OwnerRef, SearchSet } from './types';
@@ -40,6 +40,7 @@ export function matcher(f: Filters, search: SearchSet | null, nominal: number, v
   const classes = f.classes.length ? new Set(f.classes) : null;
   const lot = (LOT_STEPS_AC[f.lotStep] ?? 0) * 43560;
   const btl = BTL_STEPS[f.btlStep] ?? Infinity;
+  const pre = new Set(f.presets);
   return (r) => {
     if (pids && !pids.has(r.pid)) return false;
     if (counties && !counties.has(r.co)) return false;
@@ -49,6 +50,14 @@ export function matcher(f: Filters, search: SearchSet | null, nominal: number, v
     if (Number.isFinite(btl)) {
       if ((r.btl ?? 1e9) > btl) return false;
       if (!f.includeNominal && (r.jv ?? 0) < nominal) return false;
+    }
+    if (pre.size) {
+      if (pre.has('long') && (r.hold ?? r.hf ?? -1) < LONG_HOLD_YEARS) return false;
+      if (pre.has('underbuilt') && ((r.btl ?? 1e9) > UNDERBUILT.maxBtl || (r.lot ?? 0) < UNDERBUILT.minLotAc * 43560 || (r.jv ?? 0) < nominal))
+        return false;
+      if (pre.has('outside') && (r.oa ?? 0) < 1) return false;
+      if (pre.has('small') && r.spf !== 1) return false;
+      if (pre.has('trust') && r.et !== 1) return false;
     }
     if (view && (r.lon < view[0] || r.lon > view[2] || r.lat < view[1] || r.lat > view[3])) return false;
     return true;
@@ -81,7 +90,25 @@ export interface OwnerResult {
   mail: IndexRow;
   mailCount: number;
   top: IndexRow;
+  /** Prospecting signals across the matching parcels. */
+  flags: { outState: boolean; outCounty: boolean; trust: boolean; small: boolean };
 }
+
+/** "Out of state · Estate / trust": the owner-level signals, for the table and CSV. */
+/** Sort key for Signals: how many signals, then out of state above another Florida county. */
+export function signalRank(g: Pick<OwnerResult, 'flags'>): number {
+  const f = g.flags;
+  return ((f.outState || f.outCounty ? 1 : 0) + (f.trust ? 1 : 0) + (f.small ? 1 : 0)) * 2 + (f.outState ? 1 : 0);
+}
+
+export function signalText(g: Pick<OwnerResult, 'flags'>): string {
+  const f = g.flags;
+  return [f.outState ? 'Out of state' : f.outCounty ? 'Other FL county' : null, f.trust ? 'Estate / trust' : null, f.small ? 'Small portfolio' : null]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+const outOfArea = (oa: number | null): string | null => (oa === 2 ? 'Out of state' : oa === 1 ? 'Other Florida county' : null);
 
 const groupLabel = (ix: ParcelIndex, ref: OwnerRef, first: IndexRow): string => {
   if (ref.kind === 'a') {
@@ -104,6 +131,7 @@ export function ownerResults(ix: ParcelIndex, rows: IndexRow[], grouping: OwnerG
       g = {
         ref, key, label: groupLabel(ix, ref, r), rows: [], total, jv: 0, sf: 0, units: 0, classes: new Map(),
         longest: null, avgHold: null, knownHolds: 0, mail: r, mailCount: 0, top: r,
+        flags: { outState: false, outCounty: false, trust: false, small: false },
       };
       groups.set(key, g);
     }
@@ -113,6 +141,10 @@ export function ownerResults(ix: ParcelIndex, rows: IndexRow[], grouping: OwnerG
     g.units += r.u ?? 0;
     g.classes.set(r.cls, (g.classes.get(r.cls) ?? 0) + 1);
     if ((r.jv ?? 0) > (g.top.jv ?? 0)) g.top = r;
+    if (r.oa === 2) g.flags.outState = true;
+    if (r.oa === 1) g.flags.outCounty = true;
+    if (r.et === 1) g.flags.trust = true;
+    if (r.spf === 1) g.flags.small = true;
   }
   for (const g of groups.values()) {
     let sum = 0;
@@ -178,7 +210,7 @@ export function ownersCsv(ix: ParcelIndex, groups: OwnerResult[], grouping: Owne
     'Owner name', 'Related entities', 'Matching parcels', 'Total parcels (all 3 counties)', 'Assessed market value (matching)',
     'Building SF (matching)', 'Residential units (matching)', 'Asset classes', 'Longest hold (years)', 'Average hold (years, known holds)',
     'Mailing address 1', 'Mailing address 2', 'Mailing city', 'Mailing state', 'Mailing ZIP', 'Other mailing addresses',
-    'Largest property', 'Largest property city', 'Grouped by',
+    'Out-of-area owner', 'Estate or trust', 'Small portfolio owner', 'Largest property', 'Largest property city', 'Grouped by',
   ];
   const rows = groups.map((g) => [
     g.label,
@@ -197,6 +229,9 @@ export function ownersCsv(ix: ParcelIndex, groups: OwnerResult[], grouping: Owne
     g.mail.mst,
     g.mail.mzip,
     g.mailCount > 1 ? g.mailCount - 1 : null,
+    g.flags.outState ? 'Out of state' : g.flags.outCounty ? 'Other Florida county' : null,
+    g.flags.trust ? 'Yes' : null,
+    g.flags.small ? 'Yes' : null,
     g.top.addr,
     g.top.city,
     g.ref.kind === 'a' ? 'Mailing address' : g.ref.kind === 'n' ? 'Owner name' : grouping === 'addr' ? 'Single parcel' : 'Owner name',
@@ -209,7 +244,8 @@ export function parcelsCsv(rows: IndexRow[], useCodes: Record<string, string>, n
     'Parcel ID', 'County', 'Site address', 'City', 'ZIP', 'Asset class', 'Property use', 'Assessed market value',
     'Nominal value (common area / sub-parcel)', 'Building SF', 'Lot acres', 'Lot SF', 'Residential units', 'Year built',
     'Last sale date', 'Last sale price', 'Years held', 'Owner name', 'Mailing address 1', 'Mailing address 2',
-    'Mailing city', 'Mailing state', 'Mailing ZIP', 'Mailing address (one line)', 'Latitude', 'Longitude', 'Link',
+    'Mailing city', 'Mailing state', 'Mailing ZIP', 'Mailing address (one line)', 'Out-of-area owner', 'Estate or trust',
+    'Small portfolio owner', 'Latitude', 'Longitude', 'Link',
   ];
   const out = rows.map((r) => [
     parcelId(r.pid, r.co),
@@ -236,6 +272,9 @@ export function parcelsCsv(rows: IndexRow[], useCodes: Record<string, string>, n
     r.mst,
     r.mzip,
     mailingLine(r),
+    outOfArea(r.oa),
+    r.et === 1 ? 'Yes' : null,
+    r.spf === 1 ? 'Yes' : null,
     r.lat,
     r.lon,
     link(r.pid),

@@ -481,7 +481,7 @@ export class OwnerProfile {
     const base = `${window.location.origin}${window.location.pathname}`;
     const slug = (this.label || 'owner').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
     download(`pa2-${slug}-${stamp()}.csv`, parcelsCsv(this.rows, this.manifest.use_codes ?? {}, nominalMax(this.manifest), (pid) => `${base}#p=${pid}`));
-    toast(`Exported ${int(this.rows.length)} parcels`);
+    toast(`Exported ${int(this.rows.length)} ${this.rows.length === 1 ? 'parcel' : 'parcels'}`);
   }
 
   /** Key for comparing with the map's owner spotlight. */

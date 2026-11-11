@@ -14,6 +14,8 @@ import {
   parcelsCsv,
   refKey,
   relatedEntities,
+  signalRank,
+  signalText,
   stamp,
   type OwnerResult,
 } from '../results';
@@ -28,6 +30,8 @@ export interface ResultsHandlers {
   onLayout(px: number): void;
   /** Current map view, for "In map view" results. */
   viewBbox(): Bbox;
+  /** Open / tab / scope changed (the page link records them). */
+  onStateChange(): void;
 }
 
 type Tab = 'owners' | 'parcels';
@@ -142,6 +146,20 @@ export class ResultsPanel {
     return this.open;
   }
 
+  getState(): { open: boolean; tab: Tab; scope: Scope } {
+    return { open: this.open, tab: this.tab, scope: this.scope };
+  }
+
+  /** Restore from a link or a saved screen. */
+  applyState(st: { open: boolean; tab: Tab; scope: Scope }): void {
+    this.scope = st.scope;
+    this.tab = st.tab;
+    this.syncChrome();
+    if (st.open !== this.open) this.setOpen(st.open);
+    else this.schedule();
+    this.handlers.onStateChange();
+  }
+
   /** Open on a tab (the sidebar's "See matching owners"). */
   show(tab: Tab = 'owners'): void {
     this.setTab(tab, false);
@@ -155,6 +173,7 @@ export class ResultsPanel {
     if (open) this.ensureIndex();
     this.handlers.onLayout(this.height());
     if (open) this.schedule();
+    this.handlers.onStateChange();
   }
 
   /** The panel's height over the map: mirrors .results / .results.open in app.css. */
@@ -170,6 +189,7 @@ export class ResultsPanel {
     this.syncChrome();
     if (openIt && !this.open) this.setOpen(true);
     this.syncActive(true);
+    this.handlers.onStateChange();
   }
 
   private setScope(s: Scope): void {
@@ -177,6 +197,7 @@ export class ResultsPanel {
     saveUi({ resultsScope: s });
     this.syncChrome();
     this.schedule();
+    this.handlers.onStateChange();
   }
 
   private syncChrome(): void {
@@ -268,7 +289,7 @@ export class ResultsPanel {
     if (this.tab === 'owners') {
       const rows = this.ownersTable.sorted();
       download(`pa2-owners-${stamp()}.csv`, ownersCsv(ix, rows, s.ownerGroup));
-      toast(`Exported ${int(rows.length)} owners`);
+      toast(`Exported ${int(rows.length)} ${rows.length === 1 ? 'owner' : 'owners'}`);
     } else {
       const rows = this.parcelsTable.sorted();
       const base = `${window.location.origin}${window.location.pathname}`;
@@ -276,7 +297,7 @@ export class ResultsPanel {
         `pa2-parcels-${stamp()}.csv`,
         parcelsCsv(rows, this.manifest.use_codes ?? {}, nominalMax(this.manifest), (pid) => `${base}#p=${pid}`),
       );
-      toast(`Exported ${int(rows.length)} parcels`);
+      toast(`Exported ${int(rows.length)} ${rows.length === 1 ? 'parcel' : 'parcels'}`);
     }
   }
 
@@ -314,6 +335,14 @@ export class ResultsPanel {
           return h('span', { class: 'rs-classes' }, list.slice(0, 4).map(([c]) => sw(c)), h('span', { class: 'rs-clip' }, list.map(([c, n]) => `${CLASS_SHORT[c] ?? c}${list.length > 1 ? ` ${n}` : ''}`).join(' · ')));
         },
         title: (g) => [...g.classes.entries()].map(([c, n]) => `${CLASS_SHORT[c] ?? c}: ${n}`).join(', '),
+      },
+      {
+        id: 'signals', label: 'Signals', width: 170,
+        sort: (a, b) => signalRank(a) - signalRank(b),
+        desc: true,
+        info: 'Prospecting signals on the matching parcels: owner mails from out of state or another Florida county, owner name reads as a trust or estate, small portfolio owner (2–10 parcels in one class).',
+        cell: (g) => h('span', { class: 'rs-clip rs-signals' }, signalText(g) || '—'),
+        title: (g) => signalText(g) || undefined,
       },
       {
         id: 'longest', label: 'Longest hold', width: 104, align: 'right',

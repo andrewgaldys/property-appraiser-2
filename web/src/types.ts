@@ -116,6 +116,12 @@ export interface TileProps {
   hf?: number;
   onk?: number;
   oak?: number;
+  /** Owner mailing address: 2 out of state, 1 another Florida county. */
+  oa?: number;
+  /** Small portfolio owner (2–10 parcels, one asset class). */
+  spf?: number;
+  /** Owner name reads as a trust or an estate. */
+  et?: number;
 }
 
 export interface ParcelRecord {
@@ -162,6 +168,9 @@ export interface ParcelRecord {
   sales_from?: number | null;
   owner_name_key: number | null;
   owner_addr_key: number | null;
+  out_of_area?: number | null;
+  small_portfolio?: number | null;
+  estate_trust?: number | null;
   legal_desc: string;
   tax_roll_year: number | null;
   lon: number;
@@ -221,6 +230,7 @@ export interface Portfolio {
 }
 
 export type ExtrudeMode = 'flat' | 'value' | 'sqft' | 'hold';
+export type PresetId = 'long' | 'underbuilt' | 'outside' | 'small' | 'trust';
 /** Top owners: group parcels by owner name, or by mailing address (reveals sponsors behind single-asset LLCs). */
 export type OwnerGrouping = 'name' | 'addr';
 /** "Color by": asset class (default) or a metric ramp. */
@@ -235,7 +245,15 @@ export interface Filters {
   btlStep: number; // index into BTL_STEPS (0 = any)
   /** Count nominal-value parcels in value screens and in-view totals (off by default). */
   includeNominal: boolean;
+  /** Prospecting presets, all applied together (AND) with the rest. */
+  presets: PresetId[];
 }
+
+/** How a search set was made, so links and saved screens can rebuild it from the data. */
+export type SearchSpec =
+  | { kind: 'query'; q: string }
+  | { kind: 'owner'; name: string }
+  | { kind: 'mail'; label: string };
 
 /** Parcels picked by a search, shown on the map like a filter (see SearchBox). */
 export interface SearchSet {
@@ -243,6 +261,7 @@ export interface SearchSet {
   label: string;
   pids: string[];
   bbox: Bbox;
+  spec: SearchSpec;
 }
 
 export interface Selection {

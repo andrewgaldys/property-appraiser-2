@@ -12,6 +12,7 @@ import {
   COLOR_PORTFOLIO,
   COLOR_SELECTED,
   HEIGHT_STOPS,
+  LONG_HOLD_YEARS,
   LOT_STEPS_AC,
   MAP_GROUND,
   NOMINAL_VALUE_MAX,
@@ -19,6 +20,7 @@ import {
   RAMP_NORMAL,
   RAMP_POINTS,
   RAMP_SELECTED,
+  UNDERBUILT,
 } from '../config';
 import type { AppState, ExtrudeMode, Filters, Manifest, OwnerRef, SearchSet, Selection, ShadeMode } from '../types';
 
@@ -237,6 +239,14 @@ export function filterExpr(
   if (Number.isFinite(btl)) {
     all.push(['<=', num('btl', 1e9), btl]);
     if (!f.includeNominal) all.push(['>=', num('jv', 0), nominal]);
+  }
+  for (const p of f.presets) {
+    if (p === 'long') all.push(['>=', HOLD_OR_FLOOR, LONG_HOLD_YEARS]);
+    else if (p === 'underbuilt')
+      all.push(['<=', num('btl', 1e9), UNDERBUILT.maxBtl], ['>=', num('lot', 0), UNDERBUILT.minLotAc * 43560], ['>=', num('jv', 0), nominal]);
+    else if (p === 'outside') all.push(['>=', num('oa', 0), 1]);
+    else if (p === 'small') all.push(['==', num('spf', 0), 1]);
+    else if (p === 'trust') all.push(['==', num('et', 0), 1]);
   }
   return all as FilterSpecification;
 }

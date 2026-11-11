@@ -66,6 +66,10 @@ export interface IndexRow {
   mzip: string;
   lon: number;
   lat: number;
+  /** Prospecting flags: out-of-area owner (2 state, 1 county), small portfolio, estate / trust. */
+  oa: number | null;
+  spf: number | null;
+  et: number | null;
   hAddr: string;
   hOwn: string;
   hUse: string;
@@ -172,6 +176,9 @@ export function buildIndex(raw: RawIndex, useCodes: Record<string, string>): Par
       mzip: str(a, 'mzip'),
       lon: num(a, 'lon') ?? 0,
       lat: num(a, 'lat') ?? 0,
+      oa: num(a, 'oa'),
+      spf: num(a, 'spf'),
+      et: num(a, 'et'),
       hAddr: hay(`${str(a, 'addr')} ${city}`),
       hOwn: hay(str(a, 'own')),
       hUse,

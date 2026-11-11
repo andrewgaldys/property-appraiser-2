@@ -385,7 +385,7 @@ export class FilterPanel {
     const shade = SHADE_MODES.find((x) => x.id === s.shade)?.label ?? '';
     sum('display', `${ext} · ${shade}`);
 
-    const dirty = f.counties.length > 0 || f.classes.length > 0 || n > 0 || f.includeNominal || !!s.search;
+    const dirty = f.counties.length > 0 || f.classes.length > 0 || n > 0 || f.includeNominal || f.presets.length > 0 || !!s.search;
     this.resetBtn.disabled = !dirty;
   }
 

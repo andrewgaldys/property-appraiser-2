@@ -54,6 +54,7 @@ const ICONS: Record<string, string> = {
   download: 'M8 2.5v8M4.5 7.5L8 11l3.5-3.5M3 13.5h10',
   table: 'M2.5 3.5h11v9h-11zM2.5 6.5h11M2.5 9.5h11M6.5 3.5v9',
   back: 'M10 3.5L5.5 8l4.5 4.5',
+  save: 'M4.5 2.5h7v11L8 10.5l-3.5 3z',
   info: 'M8 2a6 6 0 110 12A6 6 0 018 2zM8 7.2v4M8 4.9v.2',
   legend: 'M2.5 4.5h2M6.5 4.5h7M2.5 8h2M6.5 8h7M2.5 11.5h2M6.5 11.5h7',
   warn: 'M8 2.5l6 10.5H2zM8 6.5v3M8 11.2v.2',

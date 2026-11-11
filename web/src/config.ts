@@ -1,4 +1,4 @@
-import type { BasemapMode, ExtrudeMode, Filters, ShadeMode } from './types';
+import type { BasemapMode, ExtrudeMode, Filters, PresetId, ShadeMode } from './types';
 
 export const APP_NAME = 'Property Appraiser 2.0';
 export const APP_VERSION = 'V0.1';
@@ -62,7 +62,20 @@ export const DEFAULT_FILTERS: Filters = {
   lotStep: 0,
   btlStep: 0,
   includeNominal: false,
+  presets: [],
 };
+
+/** Prospecting presets: plain-language screens a broker runs. Rules: map/layers.ts filterExpr and results.ts matcher. */
+export const LONG_HOLD_YEARS = 15;
+export const UNDERBUILT = { maxBtl: 0.5, minLotAc: 0.5 };
+export const PRESETS: { id: PresetId; label: string; chip: string }[] = [
+  { id: 'long', label: 'Long-term holders', chip: `Held ${LONG_HOLD_YEARS}+ yrs` },
+  { id: 'underbuilt', label: 'Underbuilt sites', chip: 'Underbuilt' },
+  { id: 'outside', label: 'Out-of-area owners', chip: 'Out-of-area owner' },
+  { id: 'small', label: 'Small portfolio owners', chip: 'Small portfolio' },
+  { id: 'trust', label: 'Estate / trust owned', chip: 'Estate / trust' },
+];
+export const PRESET_IDS = PRESETS.map((p) => p.id);
 
 export const EXTRUDE_MODES: { id: ExtrudeMode; label: string; legend: string }[] = [
   { id: 'flat', label: 'Flat', legend: 'Flat' },

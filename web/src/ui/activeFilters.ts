@@ -1,4 +1,4 @@
-import { CLASS_COLORS, CLASS_FALLBACK, CLASS_SHORT, COUNTY_META, DEFAULT_FILTERS } from '../config';
+import { CLASS_COLORS, CLASS_FALLBACK, CLASS_SHORT, COUNTY_META, DEFAULT_FILTERS, PRESETS } from '../config';
 import { clear, h, icon } from '../dom';
 import type { Store } from '../state';
 import type { AppState, Filters, SearchSet } from '../types';
@@ -16,7 +16,13 @@ interface Chip {
 function chipsFor(f: Filters, search: SearchSet | null): Chip[] {
   const out: Chip[] = [];
   if (search)
-    out.push({ label: `${search.label} · ${search.pids.length.toLocaleString('en-US')} parcels`, title: 'Search results', remove: () => ({}), search: true });
+    out.push({ label: `${search.label} · ${search.pids.length.toLocaleString('en-US')} ${search.pids.length === 1 ? 'parcel' : 'parcels'}`, title: 'Search results', remove: () => ({}), search: true });
+  for (const p of f.presets)
+    out.push({
+      label: PRESETS.find((x) => x.id === p)?.chip ?? p,
+      title: PRESETS.find((x) => x.id === p)?.label ?? 'Prospecting',
+      remove: (x) => ({ presets: x.presets.filter((v) => v !== p) }),
+    });
   for (const c of f.counties)
     out.push({ label: COUNTY_META[c]?.name ?? String(c), title: 'County', remove: (x) => ({ counties: x.counties.filter((v) => v !== c) }) });
   for (const cls of f.classes)

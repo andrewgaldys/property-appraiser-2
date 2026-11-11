@@ -1,5 +1,5 @@
 import { tokens, type IndexRow, type ParcelIndex, type MailingGroup, type Token } from './parcelIndex';
-import type { Bbox } from './types';
+import type { Bbox, SearchSet, SearchSpec } from './types';
 
 /**
  * Client-side search over the published search index (pipeline/pa2/publish.py search_index): owner
@@ -85,6 +85,32 @@ export function search(ix: SearchIndex, query: string): SearchResults {
     owners: [...owners.values()].sort((a, b) => b.jv - a.jv),
     mailing: mailing.sort((a, b) => b.jv - a.jv),
   };
+}
+
+/** More matches than this make the map filter heavy; the search box asks for another word instead. */
+export const MAX_SET = 10_000;
+
+/** A rebuilt search set, or how many parcels matched when there is no set to show (none, or too many). */
+export type ResolvedSearch = { set: SearchSet } | { set: null; count: number };
+
+/** Rebuild a search set from its spec (links, saved screens). */
+export function resolveSearch(ix: ParcelIndex, spec: SearchSpec): ResolvedSearch {
+  let rows: IndexRow[];
+  let label: string;
+  if (spec.kind === 'query') {
+    rows = search(ix, spec.q).all;
+    label = `“${spec.q}”`;
+  } else if (spec.kind === 'owner') {
+    const key = ix.rows.find((r) => r.own === spec.name && r.onk != null)?.onk;
+    rows = key != null ? ix.rows.filter((r) => r.onk === key) : ix.rows.filter((r) => r.own === spec.name);
+    label = `Owner: ${spec.name}`;
+  } else {
+    const g = ix.mailing.find((m) => m.label === spec.label);
+    rows = g ? ix.rows.filter((r) => r.oak === g.key) : [];
+    label = `Mailing address: ${spec.label}`;
+  }
+  if (!rows.length || rows.length > MAX_SET) return { set: null, count: rows.length };
+  return { set: { label, pids: [...new Set(rows.map((r) => r.pid))], bbox: rowsBbox(rows), spec } };
 }
 
 /** Box around the rows (with a little room), for fitting the map. */

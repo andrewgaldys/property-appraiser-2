@@ -9,6 +9,8 @@ export interface Column<T> {
   align?: 'right';
   /** Ascending comparator; columns without one are not sortable. */
   sort?: (a: T, b: T) => number;
+  /** First click sorts high to low (numbers do anyway). */
+  desc?: boolean;
   cell: (row: T) => Child;
   /** Hover text for the cell (full value of truncated text). */
   title?: (row: T) => string | undefined;
@@ -80,9 +82,9 @@ export class VirtualTable<T> {
   }
 
   private toggleSort(c: Column<T>): void {
-    // A new column starts at its most useful end: text A→Z, numbers high→low.
-    const numeric = c.align === 'right';
-    this.sortState = this.sortState.id === c.id ? { id: c.id, dir: this.sortState.dir === 1 ? -1 : 1 } : { id: c.id, dir: numeric ? -1 : 1 };
+    // A new column starts at its most useful end: text A→Z, numbers (and `desc` columns) high→low.
+    const highFirst = c.align === 'right' || c.desc === true;
+    this.sortState = this.sortState.id === c.id ? { id: c.id, dir: this.sortState.dir === 1 ? -1 : 1 } : { id: c.id, dir: highFirst ? -1 : 1 };
     this.renderHead();
     this.apply();
     this.el.scrollTop = 0;

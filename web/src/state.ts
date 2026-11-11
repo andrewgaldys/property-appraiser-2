@@ -1,4 +1,4 @@
-import { DEFAULT_FILTERS, STORAGE_KEY, UI_KEY } from './config';
+import { DEFAULT_FILTERS, PRESET_IDS, STORAGE_KEY, UI_KEY } from './config';
 import type { AppState } from './types';
 
 type Listener<T> = (state: T, prev: T) => void;
@@ -38,6 +38,7 @@ export function loadSavedView(): Partial<AppState> {
     if (v.filters && typeof v.filters === 'object') {
       const f = { ...DEFAULT_FILTERS, ...v.filters };
       f.includeNominal = f.includeNominal === true;
+      f.presets = Array.isArray(f.presets) ? f.presets.filter((p) => PRESET_IDS.includes(p)) : [];
       out.filters = f;
     }
     if (v.extrude && ['flat', 'value', 'sqft', 'hold'].includes(v.extrude)) out.extrude = v.extrude;
