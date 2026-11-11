@@ -1,18 +1,27 @@
 import { CLASS_BADGE, CLASS_COLORS, CLASS_FALLBACK, CLASS_SHORT, COUNTY_META } from '../config';
-import { clear, h, icon, type Child } from '../dom';
-import { int, money, moneyFull, parcelId, pct, saleDate, titleCase } from '../format';
+import { appendAll, clear, h, icon, type Child } from '../dom';
+import { acres, int, money, moneyFull, parcelId, pct, saleDate, sqft, titleCase } from '../format';
 import type { Manifest, ParcelRecord, Portfolio, PortfolioItem, TileProps } from '../types';
 import type { AerialCard } from './aerial';
-import { holdCaption, holdTier, physicalFacts, portfolioSummary, saleFacts, signals, type Fact } from './facts';
+import {
+  INFO,
+  holdInfo,
+  isNominal,
+  parentSite,
+  physicalFacts,
+  portfolioMetrics,
+  portfolioSummary,
+  saleFacts,
+  signals,
+  unitsApply,
+  valueFacts,
+  type Fact,
+} from './facts';
+import { infoTip } from './infotip';
 
 /** Asset-class badge: the class color carries identity, the label repeats it in text. */
 const classBadge = (cls: string) =>
-  h(
-    'span',
-    { class: 'badge class-badge' },
-    h('i', { style: { background: CLASS_COLORS[cls] ?? CLASS_FALLBACK } }),
-    CLASS_BADGE[cls] ?? cls,
-  );
+  h('span', { class: 'badge class-badge' }, h('i', { style: { background: CLASS_COLORS[cls] ?? CLASS_FALLBACK } }), CLASS_BADGE[cls] ?? cls);
 
 export interface DrawerHandlers {
   onClose(): void;
@@ -23,34 +32,28 @@ export interface DrawerHandlers {
   onCopyLink(): void;
 }
 
-const section = (title: string, ...children: Child[]) =>
-  h('section', { class: 'dr-sec' }, h('h3', null, title), ...children);
+const section = (title: string, ...children: Child[]) => h('section', { class: 'dr-sec' }, h('h3', null, title), ...children);
+
+const label = (f: Fact) => h('dt', null, f.k, f.info ? infoTip(f.k.toLowerCase(), f.info) : null);
 
 const factGrid = (facts: Fact[]) =>
-  h(
-    'dl',
-    { class: 'facts' },
-    facts.map((f) =>
-      h('div', { class: 'fact' }, h('dt', null, f.k), h('dd', null, f.v, f.sub ? h('small', null, f.sub) : null)),
-    ),
-  );
+  facts.length
+    ? h('dl', { class: 'facts' }, facts.map((f) => h('div', { class: 'fact' }, label(f), h('dd', null, f.v, f.sub ? h('small', null, f.sub) : null))))
+    : null;
 
 /** Land vs. improvement split: one whole, two parts, 2px surface gap, figures beside. */
-function splitBar(r: ParcelRecord): HTMLElement {
+function splitBar(r: ParcelRecord): HTMLElement | null {
   const jv = r.just_value ?? 0;
-  const land = Math.min(r.land_value ?? 0, jv);
+  if (jv <= 0 || r.land_value == null) return null;
+  const land = Math.min(r.land_value, jv);
   const impr = Math.max(jv - land, 0);
-  const landPct = jv > 0 ? land / jv : 0;
+  const landPct = land / jv;
   return h(
     'div',
     { class: 'split' },
     h(
       'div',
-      {
-        class: 'split-bar',
-        role: 'img',
-        'aria-label': `Land ${pct(landPct)} of just value, improvements ${pct(1 - landPct)}`,
-      },
+      { class: 'split-bar', role: 'img', 'aria-label': `Land ${pct(landPct)} of value, buildings ${pct(1 - landPct)}` },
       landPct > 0 ? h('span', { class: 'seg-land', style: { flexGrow: String(landPct) } }) : null,
       landPct < 1 ? h('span', { class: 'seg-impr', style: { flexGrow: String(1 - landPct) } }) : null,
     ),
@@ -58,7 +61,7 @@ function splitBar(r: ParcelRecord): HTMLElement {
       'div',
       { class: 'split-legend' },
       h('span', null, h('i', { class: 'sw land' }), 'Land ', h('b', null, pct(landPct)), ` · ${money(land)}`),
-      h('span', null, h('i', { class: 'sw impr' }), 'Improvements ', h('b', null, pct(jv > 0 ? 1 - landPct : 0)), ` · ${money(impr)}`),
+      h('span', null, h('i', { class: 'sw impr' }), 'Buildings ', h('b', null, pct(1 - landPct)), ` · ${money(impr)}`),
     ),
   );
 }
@@ -66,6 +69,7 @@ function splitBar(r: ParcelRecord): HTMLElement {
 export class Drawer {
   readonly el: HTMLElement;
   private scroller: HTMLElement;
+  private top: HTMLElement;
   private body: HTMLElement;
   private foot: HTMLElement;
 
@@ -76,9 +80,11 @@ export class Drawer {
     private aerial: AerialCard,
   ) {
     this.el = root;
+    this.top = h('div', { class: 'dr-top' });
     this.body = h('div', { class: 'dr-body' });
-    // The aerial card sits at the very top and is not rebuilt on each render (its map persists).
-    this.scroller = h('div', { class: 'dr-scroll' }, aerial.el, this.body);
+    // The aerial card sits between the key facts and the detail sections, and is never rebuilt
+    // (its map persists across selections).
+    this.scroller = h('div', { class: 'dr-scroll' }, this.top, aerial.el, this.body);
     this.foot = h(
       'footer',
       { class: 'dr-foot' },
@@ -110,61 +116,282 @@ export class Drawer {
   }
 
   showLoading(hint?: TileProps): void {
+    clear(this.top);
     clear(this.body);
     this.foot.hidden = true;
-    this.body.append(
+    this.top.append(
       h(
         'header',
         { class: 'dr-head' },
-        h(
-          'div',
-          { class: 'dr-badges' },
-          hint ? h('span', { class: 'badge' }, COUNTY_META[hint.co]?.badge ?? String(hint.co)) : null,
-          hint ? classBadge(hint.cls) : null,
-        ),
+        h('div', { class: 'dr-badges' }, hint ? classBadge(hint.cls) : null),
         h('h2', { class: 'dr-addr' }, hint?.addr || 'Loading parcel…'),
         h('div', { class: 'dr-city skeleton' }, ' '),
       ),
-      h('div', { class: 'dr-loading' }, h('span', { class: 'spinner' }), 'Loading tax-roll record'),
+      h('div', { class: 'dr-loading' }, h('span', { class: 'spinner' }), 'Loading the tax-roll record'),
     );
     this.open();
   }
 
   showError(message: string): void {
+    clear(this.top);
     clear(this.body);
     this.foot.hidden = true;
     this.aerial.hide();
-    this.body.append(h('p', { class: 'dr-error' }, message));
+    this.top.append(h('p', { class: 'dr-error' }, message));
     this.open();
   }
 
   /** portfolio: undefined = still resolving, null = no other parcels. */
   render(r: ParcelRecord, portfolio: Portfolio | null | undefined, focus: boolean): void {
+    const m = this.manifest;
     const scrollTop = this.scroller.scrollTop;
+    clear(this.top);
     clear(this.body);
     this.foot.hidden = false;
     const county = COUNTY_META[r.county_code];
-    const sig = signals(r);
-    const tier = holdTier(r.hold_period_years);
+    const nominal = isNominal(r.just_value, m);
+    const hold = holdInfo(r, m);
+    const sig = signals(r, m);
     this.aerial.show(r.parcel_id, r.bbox);
 
-    // ---- Header ------------------------------------------------------------
-    this.body.append(
+    // ---- Header + key facts: the decision-relevant read, top to bottom -----------------------
+    const useDesc = r.use_description || CLASS_BADGE[r.asset_class] || r.asset_class;
+    const units = unitsApply(r.asset_class, r.use_code) && r.residential_units ? r.residential_units : null;
+    const keyFacts: { k: string; v: Child; sub?: Child; info?: string; cls?: string }[] = [
+      nominal
+        ? { k: 'Assessed market value', v: 'Nominal', sub: `${moneyFull(r.just_value)} on the roll`, info: INFO.marketValue, cls: 'nominal' }
+        : { k: 'Assessed market value', v: moneyFull(r.just_value), sub: r.tax_roll_year ? `${r.tax_roll_year} roll` : undefined, info: INFO.marketValue },
+      { k: 'Building', v: sqft(r.tot_lvg_area) },
+      { k: 'Lot', v: acres(r.lnd_sqfoot), sub: r.lnd_sqfoot ? `${int(r.lnd_sqfoot)} SF` : undefined },
+      ...(units ? [{ k: 'Residential units', v: int(units), info: INFO.units }] : []),
+      r.last_sale_price != null
+        ? { k: 'Last sale', v: moneyFull(r.last_sale_price), sub: saleDate(r.last_sale_year, r.last_sale_month) }
+        : { k: 'Last sale', v: 'Not on record', cls: 'muted' },
+      { k: 'Years held', v: hold.text, sub: hold.minimum ? 'minimum' : undefined, info: hold.caption, cls: `hold hold-${hold.tier}` },
+    ];
+    const kf = keyFacts.filter((f) => f.v && f.v !== '—');
+
+    appendAll(
+      this.top,
       h(
         'header',
         { class: 'dr-head' },
-        h(
-          'div',
-          { class: 'dr-badges' },
-          h('span', { class: 'badge' }, county?.badge ?? String(r.county_code)),
-          classBadge(r.asset_class),
-        ),
+        h('div', { class: 'dr-badges' }, classBadge(r.asset_class), h('span', { class: 'badge' }, county?.badge ?? String(r.county_code))),
         h('h2', { class: 'dr-addr' }, r.site_address || 'No site address'),
         h('div', { class: 'dr-city' }, [titleCase(r.site_city), r.site_zip ? `FL ${r.site_zip}` : 'FL'].filter(Boolean).join(', ')),
         h(
           'div',
-          { class: 'dr-pid' },
-          h('span', { class: 'k' }, 'Parcel ID'),
+          { class: 'dr-use' },
+          h('span', null, useDesc),
+          r.use_code ? h('span', { class: 'use-code' }, `Use code ${r.use_code}`) : null,
+          r.use_code ? infoTip('use code', INFO.useCode) : null,
+        ),
+      ),
+      nominal ? this.nominalNote(r, portfolio) : null,
+      h(
+        'dl',
+        { class: 'key-facts' },
+        kf.map((f) =>
+          h(
+            'div',
+            { class: `kf${f.cls ? ` ${f.cls}` : ''}` },
+            h('dt', null, f.k, f.info ? infoTip(f.k.toLowerCase(), f.info) : null),
+            h('dd', null, h('span', { class: 'kf-v' }, f.v), f.sub ? h('span', { class: 'kf-sub' }, f.sub) : null),
+          ),
+        ),
+        h(
+          'div',
+          { class: 'kf kf-owner' },
+          h('dt', null, 'Owner'),
+          h(
+            'dd',
+            null,
+            h(
+              'button',
+              {
+                type: 'button',
+                class: `owner-name${focus ? ' on' : ''}`,
+                title: 'Highlight every parcel with this owner name or mailing address',
+                'aria-pressed': String(focus),
+                onclick: () => this.handlers.onToggleFocus(),
+              },
+              r.owner_name || 'Owner not reported',
+            ),
+            portfolio ? h('span', { class: 'kf-sub' }, `Portfolio of ${portfolio.exact ? '' : '≥ '}${int(portfolio.total)} parcels (below)`) : null,
+          ),
+        ),
+      ),
+      sig.length ? h('ul', { class: 'signals', 'aria-label': 'Screening flags' }, sig.map((s) => h('li', null, s))) : null,
+    );
+
+    // ---- Detail sections ------------------------------------------------------------------------
+    const valueSection = nominal ? null : section('Value', splitBar(r), factGrid(valueFacts(r, m)));
+    const building = physicalFacts(r);
+    const sales = saleFacts(r, m);
+    const coverage = m.sales_coverage?.[String(r.county_code)];
+
+    this.body.append(
+      ...[
+        valueSection,
+        building.length ? section('Building & lot', factGrid(building)) : null,
+        section(
+          'Sale & hold',
+          h('p', { class: 'cap hold-cap' }, hold.caption),
+          factGrid(sales),
+          coverage?.from
+            ? h('p', { class: 'cap' }, `${county?.name ?? 'County'} sale records are complete from ${coverage.from}.`)
+            : null,
+        ),
+        this.ownerSection(r, portfolio, focus),
+        this.moreDetails(r),
+      ].filter((x): x is HTMLElement => !!x),
+    );
+    this.scroller.scrollTop = scrollTop;
+    this.open();
+  }
+
+  /** The nominal-value callout, with the valued parcel it most likely belongs to. */
+  private nominalNote(r: ParcelRecord, portfolio: Portfolio | null | undefined): HTMLElement {
+    const parent = parentSite(r, portfolio, this.manifest);
+    return h(
+      'div',
+      { class: 'notice', role: 'note' },
+      icon('warn', 16),
+      h(
+        'div',
+        null,
+        h('p', { class: 'notice-title' }, 'Nominal assessed value'),
+        h(
+          'p',
+          null,
+          `Assessed at ${moneyFull(r.just_value)}: likely a common-area, condo-style or sub-parcel whose value sits on another parcel. Value figures are hidden, and screens and totals leave it out by default.`,
+        ),
+        portfolio === undefined
+          ? h('p', { class: 'notice-sub' }, 'Looking for its main site…')
+          : parent
+            ? h(
+                'button',
+                { type: 'button', class: 'parent-link', onclick: () => this.handlers.onSelectItem(parent.item) },
+                h('span', null, 'Likely part of ', h('b', null, parent.item.site_address || 'a parcel'), ` · ${money(parent.item.just_value)}`),
+                h('span', { class: 'notice-sub' }, `Same owner, ${Math.round(parent.metres)} m away`),
+                icon('arrow', 14),
+              )
+            : null,
+      ),
+    );
+  }
+
+  private ownerSection(r: ParcelRecord, portfolio: Portfolio | null | undefined, focus: boolean): HTMLElement {
+    const block: Child[] = [
+      h('div', { class: 'owner-line' }, h('span', { class: 'owner-name-static' }, r.owner_name || 'Owner not reported')),
+      h('div', { class: 'owner-addr' }, r.owner_addr || 'No mailing address on record'),
+    ];
+    if (portfolio === undefined) {
+      block.push(h('div', { class: 'dr-loading sm' }, h('span', { class: 'spinner' }), 'Finding other parcels with this owner'));
+    } else if (portfolio === null) {
+      block.push(h('p', { class: 'cap' }, 'No other parcel in the three counties shares this owner name or mailing address.'));
+    } else {
+      block.push(this.portfolioBlock(r, portfolio, focus));
+    }
+    const title = h(
+      'h3',
+      null,
+      'Owner & portfolio',
+      infoTip(
+        'owner and portfolio',
+        'Other parcels in Martin, St. Lucie and Palm Beach with the same owner name or the same normalized mailing address. Shared addresses can belong to a manager or registered agent rather than one owner.',
+      ),
+    );
+    return h('section', { class: 'dr-sec' }, title, ...block);
+  }
+
+  private portfolioBlock(r: ParcelRecord, p: Portfolio, focus: boolean): HTMLElement {
+    const m = this.manifest;
+    const chips: Child[] = [];
+    if (p.byName) chips.push(h('span', { class: 'rchip' }, 'Same name ', h('b', null, int(p.byName.count))));
+    if (p.byAddr) chips.push(h('span', { class: 'rchip' }, 'Same mailing address ', h('b', null, int(p.byAddr.count))));
+    if (p.byAddr && (p.byAddr.names ?? 0) > 1) chips.push(h('span', { class: 'rchip' }, h('b', null, int(p.byAddr.names ?? 0)), ' owner names at this address'));
+    const agent = p.byAddr?.agent
+      ? h('p', { class: 'warn' }, 'Many unrelated-looking owners share this mailing address. It may be a manager or registered agent rather than one beneficial owner.')
+      : null;
+    const counties = Object.entries(p.counties)
+      .sort((a, b) => b[1] - a[1])
+      .map(([co, n]) => `${COUNTY_META[Number(co)]?.name ?? co} ${n}`)
+      .join(' · ');
+    const metrics = portfolioMetrics(p);
+    const list = h(
+      'ol',
+      { class: 'pf-list' },
+      p.items.map((it) => {
+        const current = it.parcel_id === r.parcel_id;
+        const otherName = it.owner_name && it.owner_name !== r.owner_name;
+        const nominal = isNominal(it.just_value, m);
+        return h(
+          'li',
+          null,
+          h(
+            'button',
+            {
+              type: 'button',
+              class: `pf-item${current ? ' current' : ''}`,
+              'aria-current': current ? 'true' : null,
+              title: current ? 'Selected parcel' : 'Fly to this parcel',
+              onclick: () => this.handlers.onSelectItem(it),
+            },
+            h('i', { class: 'pf-sw', style: { background: CLASS_COLORS[it.asset_class] ?? CLASS_FALLBACK } }),
+            h(
+              'span',
+              { class: 'pf-main' },
+              h('span', { class: 'pf-addr' }, it.site_address || 'No site address'),
+              h(
+                'span',
+                { class: 'pf-sub' },
+                [titleCase(it.site_city), CLASS_SHORT[it.asset_class] ?? it.asset_class, otherName ? it.owner_name : null].filter(Boolean).join(' · '),
+              ),
+            ),
+            nominal ? h('span', { class: 'pf-val nominal' }, 'Nominal') : h('span', { class: 'pf-val' }, money(it.just_value)),
+          ),
+        );
+      }),
+    );
+    return h(
+      'div',
+      { class: 'pf' },
+      h('div', { class: 'rchips' }, chips),
+      agent,
+      h(
+        'div',
+        { class: 'pf-sum' },
+        h('div', { class: 'pf-sum-main' }, portfolioSummary(p)),
+        h('div', { class: 'pf-sum-sub' }, [counties, metrics].filter(Boolean).join(' · ')),
+        (p.byName?.nominal ?? 0) + (p.byAddr?.nominal ?? 0) > 0
+          ? h('div', { class: 'pf-sum-sub' }, 'Includes nominal-value parcels (shown as “Nominal”).')
+          : null,
+      ),
+      h(
+        'div',
+        { class: 'pf-actions' },
+        h('button', { type: 'button', class: 'btn ghost sm', onclick: () => this.handlers.onFitPortfolio(p.items) }, icon('fit', 14), 'Fit all on map'),
+        h(
+          'button',
+          { type: 'button', class: `btn ghost sm${focus ? ' on' : ''}`, 'aria-pressed': String(focus), onclick: () => this.handlers.onToggleFocus() },
+          icon('focus', 14),
+          focus ? 'Highlighted on map' : 'Highlight on map',
+        ),
+      ),
+      list,
+      p.exact ? null : h('p', { class: 'cap' }, `Showing the ${int(p.items.length)} highest-value parcels.`),
+    );
+  }
+
+  /** Secondary fields, folded away: identifiers, legal text, sources. Empty ones are left out. */
+  private moreDetails(r: ParcelRecord): HTMLElement {
+    const rows: [string, Child][] = [
+      [
+        'Parcel ID',
+        h(
+          'span',
+          { class: 'pid' },
           h('span', { class: 'mono' }, parcelId(r.parcel_id, r.county_code)),
           h(
             'button',
@@ -178,162 +405,23 @@ export class Drawer {
             icon('copy', 13),
           ),
         ),
-        h('div', { class: 'dr-use' }, `DOR ${r.use_code ?? '—'} · ${r.use_description}`),
-        sig.length ? h('ul', { class: 'signals', 'aria-label': 'Screening flags' }, sig.map((s) => h('li', null, s))) : null,
-      ),
-    );
-
-    // ---- Valuation & physicals ------------------------------------------------
-    this.body.append(
-      section(
-        'Valuation & physicals',
-        h(
-          'div',
-          { class: 'jv' },
-          h('div', { class: 'k' }, 'Just (market) value', r.tax_roll_year ? ` · ${r.tax_roll_year} roll` : ''),
-          h('div', { class: 'jv-v mono' }, moneyFull(r.just_value)),
-          r.assessed_value != null
-            ? h('div', { class: 'av' }, h('span', { class: 'k' }, 'Assessed (non-school)'), h('span', { class: 'mono' }, moneyFull(r.assessed_value)))
-            : null,
-        ),
-        splitBar(r),
-        factGrid(physicalFacts(r)),
-      ),
-    );
-
-    // ---- Last sale & hold ---------------------------------------------------------
-    this.body.append(
-      section(
-        'Last sale & hold signal',
-        h(
-          'div',
-          { class: 'sale' },
-          h(
-            'div',
-            { class: 'sale-main' },
-            h('div', { class: 'k' }, 'Last sale price'),
-            h('div', { class: 'sale-v mono' }, moneyFull(r.last_sale_price)),
-            h('div', { class: 'k sale-date' }, 'Sale date ', h('b', { class: 'mono' }, saleDate(r.last_sale_year, r.last_sale_month))),
-          ),
-          h(
-            'div',
-            { class: `hold hold-${tier}`, title: holdCaption(r) },
-            h('div', { class: 'hold-n mono' }, r.hold_period_years ?? '—'),
-            h('div', { class: 'hold-u' }, 'yr hold'),
-          ),
-        ),
-        h('p', { class: 'cap' }, holdCaption(r), r.hold_period_years != null ? ` · hold = ${this.manifest.source.as_of_year} − ${r.last_sale_year}` : ''),
-        factGrid(saleFacts(r)),
-      ),
-    );
-
-    // ---- True owner & portfolio --------------------------------------------------
-    const ownerBlock: Child[] = [
-      h(
-        'button',
-        {
-          type: 'button',
-          class: `owner-name${focus ? ' on' : ''}`,
-          title: 'Highlight every parcel sharing this owner name or mailing address',
-          onclick: () => this.handlers.onToggleFocus(),
-        },
-        r.owner_name || 'Owner not reported',
-        icon('focus', 13),
-      ),
-      h('div', { class: 'owner-addr' }, r.owner_addr || 'No mailing address on record'),
+      ],
+      ['Land use', r.use_code ? `${r.use_description} (DOR ${r.use_code})` : r.use_description],
+      ['Land value', r.land_value != null ? moneyFull(r.land_value) : ''],
+      ['Building value', r.building_value != null ? moneyFull(r.building_value) : ''],
+      ['Owner mailing address', r.owner_addr],
+      ['Legal description', r.legal_desc],
+      ['Tax roll', r.tax_roll_year ? `${r.tax_roll_year} · ${this.manifest.source.label}` : this.manifest.source.label],
     ];
-    if (portfolio === undefined) {
-      ownerBlock.push(h('div', { class: 'dr-loading sm' }, h('span', { class: 'spinner' }), 'Resolving portfolio across 3 counties'));
-    } else if (portfolio === null) {
-      ownerBlock.push(
-        h('p', { class: 'cap pf-none' }, 'No other parcel in Martin, St. Lucie or Palm Beach shares this owner name or normalized mailing address.'),
-      );
-    } else {
-      ownerBlock.push(this.portfolioBlock(r, portfolio, focus));
-    }
-    this.body.append(section('True owner & portfolio resolver', ...ownerBlock));
-    this.scroller.scrollTop = scrollTop;
-    this.open();
-  }
-
-  private portfolioBlock(r: ParcelRecord, p: Portfolio, focus: boolean): HTMLElement {
-    const chips: Child[] = [];
-    if (p.byName) chips.push(h('span', { class: 'rchip' }, 'Name match ', h('b', null, int(p.byName.count))));
-    if (p.byAddr) chips.push(h('span', { class: 'rchip' }, 'Mailing-address match ', h('b', null, int(p.byAddr.count))));
-    if (p.byAddr && (p.byAddr.names ?? 0) > 1)
-      chips.push(h('span', { class: 'rchip' }, h('b', null, int(p.byAddr.names ?? 0)), ' entity names at this address'));
-    const agent = p.byAddr?.agent
-      ? h('p', { class: 'warn' }, 'This mailing address is shared by many unrelated-looking owner names. It may belong to a manager or registered agent rather than one beneficial owner.')
-      : null;
-    const counties = Object.entries(p.counties)
-      .sort((a, b) => b[1] - a[1])
-      .map(([co, n]) => `${COUNTY_META[Number(co)]?.short ?? co} ${n}`)
-      .join(' · ');
-    const list = h(
-      'ol',
-      { class: 'pf-list' },
-      p.items.map((it) => {
-        const current = it.parcel_id === r.parcel_id;
-        const otherName = it.owner_name && it.owner_name !== r.owner_name;
-        return h(
-          'li',
-          null,
-          h(
-            'button',
-            {
-              type: 'button',
-              class: `pf-item${current ? ' current' : ''}`,
-              'aria-current': current ? 'true' : null,
-              title: current ? 'Selected parcel' : 'Fly to this parcel',
-              onclick: () => this.handlers.onSelectItem(it),
-            },
-            h(
-              'span',
-              { class: 'pf-co', style: { borderLeftColor: CLASS_COLORS[it.asset_class] ?? CLASS_FALLBACK } },
-              COUNTY_META[it.county_code]?.short ?? it.county_code,
-            ),
-            h(
-              'span',
-              { class: 'pf-main' },
-              h('span', { class: 'pf-addr' }, it.site_address || 'No site address'),
-              h(
-                'span',
-                { class: 'pf-sub' },
-                [titleCase(it.site_city), CLASS_SHORT[it.asset_class] ?? it.asset_class, otherName ? it.owner_name : null]
-                  .filter(Boolean)
-                  .join(' · '),
-              ),
-            ),
-            h('span', { class: 'pf-val mono' }, money(it.just_value)),
-            h('span', { class: `pf-match m-${it.match}` }, it.match === 'both' ? 'Name+Addr' : it.match === 'name' ? 'Name' : 'Addr'),
-          ),
-        );
-      }),
-    );
     return h(
-      'div',
-      { class: 'pf' },
-      h('div', { class: 'rchips' }, chips),
-      agent,
+      'details',
+      { class: 'dr-sec more' },
+      h('summary', null, h('span', null, 'More details'), icon('chevron', 16)),
       h(
-        'div',
-        { class: 'pf-sum' },
-        h('div', { class: 'pf-sum-main mono' }, portfolioSummary(p)),
-        h('div', { class: 'pf-sum-sub' }, counties, p.units ? ` · ${int(p.units)} units` : '', p.sf ? ` · ${int(p.sf)} bldg SF` : ''),
+        'dl',
+        { class: 'more-list' },
+        rows.filter(([, v]) => v !== '' && v != null).map(([k, v]) => h('div', null, h('dt', null, k), h('dd', null, v))),
       ),
-      h(
-        'div',
-        { class: 'pf-actions' },
-        h('button', { type: 'button', class: 'btn ghost sm', onclick: () => this.handlers.onFitPortfolio(p.items) }, icon('fit', 13), 'Fit all on map'),
-        h(
-          'button',
-          { type: 'button', class: `btn ghost sm${focus ? ' on' : ''}`, 'aria-pressed': String(focus), onclick: () => this.handlers.onToggleFocus() },
-          icon('focus', 13),
-          focus ? 'Spotlight on' : 'Spotlight portfolio',
-        ),
-      ),
-      list,
-      p.exact ? null : h('p', { class: 'cap' }, `Showing the ${int(p.items.length)} highest-value parcels.`),
     );
   }
 }

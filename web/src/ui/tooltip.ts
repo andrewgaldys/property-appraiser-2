@@ -2,13 +2,14 @@ import { CLASS_BADGE, CLASS_COLORS, CLASS_FALLBACK, COUNTY_META } from '../confi
 import { clear, h } from '../dom';
 import { int, money } from '../format';
 import type { Manifest, ParcelRecord, TileProps } from '../types';
-import { noSaleShort } from './facts';
+import { holdShort, isNominal, unitsApply } from './facts';
 
 type Lookup = (pid: string) => Promise<ParcelRecord | null>;
 
 /**
- * Hover readout: value first, then site address, property subtype, owner (all via textContent).
- * Low-zoom dots don't carry address/owner, so those are filled in from the detail shard.
+ * Hover readout: assessed market value first, then site address, property subtype, owner (all via
+ * textContent). Low-zoom dots don't carry address/owner, so those are filled in from the detail shard.
+ * Nominal-value parcels say so instead of showing "$100" as if it were a price.
  */
 export class Tooltip {
   private el: HTMLElement;
@@ -65,19 +66,18 @@ export class Tooltip {
     const pending = !rec && (p.addr === undefined || p.own === undefined);
     const addr = p.addr ?? rec?.site_address;
     const owner = p.own ?? rec?.owner_name;
-    const av = p.av ?? rec?.assessed_value ?? null;
     const jv = p.jv ?? rec?.just_value ?? null;
+    const nominal = isNominal(jv, this.manifest);
     const facts = [
-      av != null && jv != null ? `JV ${money(jv)}` : null,
-      COUNTY_META[p.co]?.short,
+      COUNTY_META[p.co]?.name,
       p.sf ? `${int(p.sf)} SF` : null,
-      p.u ? `${int(p.u)} units` : null,
-      p.hold != null
-        ? `${p.hold} yr hold`
-        : noSaleShort(p.hf != null ? this.manifest.source.as_of_year - p.hf : null),
+      p.u && unitsApply(p.cls, p.uc) ? `${int(p.u)} units` : null,
+      holdShort(p),
     ].filter(Boolean);
     this.el.append(
-      h('div', { class: 'tt-value' }, money(av ?? jv), h('span', { class: 'tt-unit' }, av != null ? 'assessed' : 'just value')),
+      nominal
+        ? h('div', { class: 'tt-value nominal' }, 'Nominal value', h('span', { class: 'tt-unit' }, `${money(jv)} on the roll`))
+        : h('div', { class: 'tt-value' }, money(jv), h('span', { class: 'tt-unit' }, 'assessed market value')),
       h('div', { class: 'tt-addr' }, addr || (pending ? '…' : 'No site address')),
       h(
         'div',
@@ -85,7 +85,7 @@ export class Tooltip {
         h('i', { class: 'tt-sw', style: { background: CLASS_COLORS[p.cls] ?? CLASS_FALLBACK } }),
         this.subtype(p),
       ),
-      h('div', { class: 'tt-owner' }, h('span', { class: 'tt-k' }, 'Owner '), owner || (pending ? '…' : 'Not reported')),
+      h('div', { class: 'tt-owner' }, h('span', { class: 'tt-k' }, 'Owner'), ' ', owner || (pending ? '…' : 'Not reported')),
       h('div', { class: 'tt-meta' }, facts.join(' · ')),
     );
   }

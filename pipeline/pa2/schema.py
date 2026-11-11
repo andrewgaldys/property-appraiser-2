@@ -7,9 +7,9 @@ analytic fields so the math lives in exactly one place.
 
 from __future__ import annotations
 
-from .config import AS_OF_YEAR, COUNTIES
+from .config import AS_OF_YEAR, COUNTIES, NOMINAL_VALUE_MAX
 from .dor_codes import ASSET_CLASSES, classify, describe, normalize_use_code
-from .entity import format_mailing_address
+from .entity import format_mailing_address, residential_use
 from .util import clean_str, round_or_none, to_int, us_state_code, zip5
 
 # Placeholder site addresses the property appraisers use for parcels without one.
@@ -37,7 +37,9 @@ FIELDS: list[tuple[str, str, str]] = [
     ("tot_lvg_area", "integer", "TOT_LVG_AREA (building sq ft)"),
     ("lnd_sqfoot", "bigint", "LND_SQFOOT (lot sq ft)"),
     ("lot_acres", "real", "LND_SQFOOT / 43,560"),
-    ("no_res_unts", "integer", "NO_RES_UNTS"),
+    ("no_res_unts", "integer", "NO_RES_UNTS (as reported: hotel rooms, pads and placeholders included)"),
+    ("residential_units", "integer", "NO_RES_UNTS on multifamily and mixed-use (DOR 012) parcels, else null"),
+    ("nominal_value", "boolean", "just_value below NOMINAL_VALUE_MAX: a common-area, condo-style or sub-parcel"),
     ("no_buldng", "integer", "NO_BULDNG"),
     ("act_yr_blt", "smallint", "ACT_YR_BLT"),
     ("eff_yr_blt", "smallint", "EFF_YR_BLT"),
@@ -53,9 +55,10 @@ FIELDS: list[tuple[str, str, str]] = [
     ("last_sale_month", "smallint", "Month of that sale"),
     ("last_sale_qual_cd", "text", "FDOR sale qualification code of that sale"),
     ("last_sale_qualified", "boolean", "True for code 01, False for codes 11+, else null"),
-    ("hold_period_years", "smallint", "AS_OF_YEAR - last_sale_year"),
-    ("no_sale_since", "smallint", "When no sale >= the minimum price is on record: the year from which none is"),
+    ("hold_period_years", "smallint", "AS_OF_YEAR - last_sale_year, when that sale is within complete records"),
+    ("no_sale_since", "smallint", "Hold unknown: the year from which no sale >= the minimum price is on record"),
     ("hold_floor_years", "smallint", "AS_OF_YEAR - no_sale_since: a lower bound on the hold period"),
+    ("sales_from", "smallint", "Year from which the county's sale records are complete (null: latest transfer only)"),
     ("owner_name_key", "integer", "Portfolio key: normalized owner name (groups of 2+)"),
     ("owner_addr_key", "integer", "Portfolio key: normalized mailing address (groups of 2+)"),
     ("legal_desc", "text", "S_LEGAL"),
@@ -68,8 +71,14 @@ FIELD_NAMES = [f[0] for f in FIELDS]
 
 
 def qualified_from_code(code: str | None) -> bool | None:
+    """FDOR codes: 01 qualified, 11+ not. Palm Beach CAMA letters: Q* qualified, D* / U* not."""
     if not code:
         return None
+    head = code.strip()[:1].upper()
+    if head == "Q":
+        return True
+    if head in ("D", "U"):
+        return False
     digits = "".join(ch for ch in code if ch.isdigit())
     if not digits:
         return None
@@ -81,7 +90,7 @@ def qualified_from_code(code: str | None) -> bool | None:
     return None
 
 
-def finalize_record(r: dict, as_of_year: int = AS_OF_YEAR) -> dict:
+def finalize_record(r: dict, as_of_year: int = AS_OF_YEAR, nominal_value_max: int = NOMINAL_VALUE_MAX) -> dict:
     """Derive analytic fields in place (and return r)."""
     r["county_name"] = COUNTIES[r["county_code"]].name if r.get("county_code") in COUNTIES else ""
     uc = normalize_use_code(r.get("use_code"))
@@ -112,10 +121,23 @@ def finalize_record(r: dict, as_of_year: int = AS_OF_YEAR) -> dict:
     lot = r.get("lnd_sqfoot")
     r["lot_acres"] = round(lot / 43560.0, 3) if lot else None
 
-    sy = r.get("last_sale_year")
-    r["hold_period_years"] = max(as_of_year - sy, 0) if sy else None
+    # Hold period. `sales_from` = the year the county's sale records become complete (null when the
+    # source only has each parcel's latest transfer, which is complete at any age). A last sale older
+    # than that, or "no priced sale since" an earlier year, only proves no sale from `sales_from` on:
+    # a later sale may be missing from the sparse early records. Such holds become minimums ("49+").
+    sy = to_int(r.get("last_sale_year"))
+    cov = to_int(r.get("sales_from"))
     nss = to_int(r.get("no_sale_since"))
-    r["no_sale_since"] = nss if nss and not sy else None
+    if sy and cov and sy < cov:
+        sy_in_records = False
+        nss = cov
+    else:
+        sy_in_records = bool(sy)
+    if nss and cov and nss < cov:
+        nss = cov
+    r["sales_from"] = cov
+    r["hold_period_years"] = max(as_of_year - sy, 0) if sy_in_records else None
+    r["no_sale_since"] = nss if nss and not sy_in_records else None
     r["hold_floor_years"] = max(as_of_year - nss, 0) if r["no_sale_since"] else None
     r["last_sale_qual_cd"] = clean_str(r.get("last_sale_qual_cd")) or None
     r["last_sale_qualified"] = qualified_from_code(r["last_sale_qual_cd"])
@@ -132,4 +154,6 @@ def finalize_record(r: dict, as_of_year: int = AS_OF_YEAR) -> dict:
     # (buildings and year built present): a placeholder for "area not reported", not one square foot.
     if r["tot_lvg_area"] is not None and r["tot_lvg_area"] < MIN_BUILDING_SQFT:
         r["tot_lvg_area"] = None
+    r["residential_units"] = r["no_res_unts"] if r["no_res_unts"] and residential_use(r) else None
+    r["nominal_value"] = r["just_value"] is not None and r["just_value"] < nominal_value_max
     return r

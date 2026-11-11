@@ -12,10 +12,12 @@ import { h, icon, toast } from './dom';
 import { MapController } from './map/controller';
 import { Store, loadSavedView, saveView } from './state';
 import type { AppState, Bbox, Manifest, ParcelRecord, Portfolio, PortfolioItem, TileProps } from './types';
+import { ActiveFilters } from './ui/activeFilters';
 import { AerialCard } from './ui/aerial';
 import { Brief } from './ui/brief';
 import { Drawer } from './ui/drawer';
-import { FilterPanel } from './ui/filters';
+import { FilterPanel, type SectionId } from './ui/filters';
+import { FirstVisitHint } from './ui/hint';
 import { Legend } from './ui/legend';
 import { Toolbar } from './ui/toolbar';
 import { Tooltip } from './ui/tooltip';
@@ -127,33 +129,68 @@ async function boot(): Promise<void> {
       const c = manifest.counties.find((x) => x.code === code);
       if (c) mapc.fitBbox(c.bbox, { maxZoom: 12.5 });
     },
-    onMarket: (b: Bbox) => mapc.fitBbox(b, { maxZoom: 15.3, pitch: store.get().extrude === 'flat' ? 0 : 55 }),
+    onMarket: (b: Bbox) => {
+      if (window.matchMedia('(max-width: 900px)').matches) setPanelOpen(false);
+      mapc.fitBbox(b, { maxZoom: 15.3, pitch: store.get().extrude === 'flat' ? 0 : 55 });
+    },
   });
   new Legend(mapEl, manifest, store);
-  new Toolbar(mapEl, store);
+
+  // Map overlay, top-left: [Filters (narrow screens)] [basemap + lens], then the applied-filter chips.
+  const panelToggle = h(
+    'button',
+    {
+      type: 'button',
+      class: 'panel-toggle',
+      'aria-controls': 'filters',
+      'aria-expanded': 'false',
+      onclick: () => setPanelOpen(!document.body.classList.contains('panel-open')),
+    },
+    icon('filters'),
+    'Filters',
+  );
+  mapEl.append(
+    h(
+      'div',
+      { class: 'map-top' },
+      h('div', { class: 'map-top-row' }, panelToggle, new Toolbar(store).el),
+      new ActiveFilters(store).el,
+    ),
+  );
+
+  function setPanelOpen(open: boolean): void {
+    document.body.classList.toggle('panel-open', open);
+    panelToggle.setAttribute('aria-expanded', String(open));
+  }
+
+  /** Bring a sidebar section into view (on narrow screens the sidebar slides in first). */
+  function showSection(id: SectionId): void {
+    if (window.matchMedia('(max-width: 900px)').matches) setPanelOpen(true);
+    panel.openSection(id);
+  }
+  const firstHint = new FirstVisitHint(mapEl, {
+    onPickMarket: () => showSection('markets'),
+    onRunScreen: () => showSection('screens'),
+  });
+  // The hint has done its job once someone filters.
+  store.subscribe((s, prev) => {
+    if (firstHint.visible && s.filters !== prev.filters) firstHint.dismiss();
+  });
+
   if (import.meta.env.DEV) {
     // Dev-only handle for console debugging (stripped from production builds).
     (window as unknown as Record<string, unknown>).__pa2 = { map: mapc.map, store, data };
   }
 
-  // Mobile: the filter bar collapses behind a toggle.
-  mapEl.append(
-    h(
-      'button',
-      { type: 'button', class: 'panel-toggle', 'aria-controls': 'filters', onclick: () => document.body.classList.toggle('panel-open') },
-      icon('filters'),
-      'Filters',
-    ),
-  );
-
   function drawerInset(): number {
-    return window.matchMedia('(max-width: 820px)').matches ? 0 : drawer.el.getBoundingClientRect().width;
+    return window.matchMedia('(max-width: 720px)').matches ? 0 : drawer.el.getBoundingClientRect().width;
   }
 
   async function select(pid: string, opts: { fly?: boolean; hint?: TileProps; keepFocus?: boolean } = {}): Promise<void> {
     const my = ++token;
     const prev = store.get();
     const hint = opts.hint;
+    firstHint.dismiss();
     const samePortfolio =
       !!prev.selection &&
       !!hint &&
@@ -234,7 +271,7 @@ async function boot(): Promise<void> {
 
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape' || brief.isOpen) return;
-    if (document.body.classList.contains('panel-open')) document.body.classList.remove('panel-open');
+    if (document.body.classList.contains('panel-open')) setPanelOpen(false);
     else if (drawer.isOpen) clearSelection();
   });
 }

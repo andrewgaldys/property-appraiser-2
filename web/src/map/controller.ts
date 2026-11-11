@@ -33,6 +33,7 @@ import {
   fillOpacity,
   heightExpr,
   layerFilter,
+  nominalMax,
   outlineColor,
   outlineWidth,
   parcelLayers,
@@ -163,7 +164,8 @@ export class MapController {
 
   private apply(s: AppState, prev: AppState): void {
     if (s.filters !== prev.filters) {
-      for (const id of PARCEL_LAYERS) this.map.setFilter(id, layerFilter(id, s.filters));
+      const nominal = nominalMax(this.manifest);
+      for (const id of PARCEL_LAYERS) this.map.setFilter(id, layerFilter(id, s.filters, nominal));
     }
     if (s.extrude !== prev.extrude) {
       const flat = s.extrude === 'flat';
@@ -272,19 +274,28 @@ export class MapController {
     const polyMin = this.manifest.tiles.polygons.minzoom;
     const layers = zoom < polyMin + 0.5 ? [L_POINTS] : [this.store.get().extrude === 'flat' ? L_FLAT : L_3D];
     const feats = this.map.queryRenderedFeatures({ layers });
+    // Nominal-value parcels ($100 common areas, sub-parcels) stay on the map but out of the totals,
+    // unless the viewer includes them.
+    const include = this.store.get().filters.includeNominal;
+    const nominal = nominalMax(this.manifest);
     const seen = new Set<string>();
     let jv = 0;
     let units = 0;
     let sf = 0;
+    let skipped = 0;
     for (const f of feats) {
       const p = f.properties as TileProps;
       if (seen.has(p.pid)) continue;
       seen.add(p.pid);
+      if (!include && (p.jv ?? 0) < nominal) {
+        skipped++;
+        continue;
+      }
       jv += p.jv ?? 0;
       units += p.u ?? 0;
       sf += p.sf ?? 0;
     }
-    this.events.onStats({ parcels: seen.size, jv, units, sf });
+    this.events.onStats({ parcels: seen.size - skipped, jv, units, sf, nominal: skipped });
   }
 
   // ---------------------------------------------------------------------------

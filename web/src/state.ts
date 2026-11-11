@@ -1,4 +1,4 @@
-import { DEFAULT_FILTERS, STORAGE_KEY } from './config';
+import { DEFAULT_FILTERS, STORAGE_KEY, UI_KEY } from './config';
 import type { AppState } from './types';
 
 type Listener<T> = (state: T, prev: T) => void;
@@ -35,7 +35,11 @@ export function loadSavedView(): Partial<AppState> {
     if (!raw) return {};
     const v = JSON.parse(raw) as Partial<AppState>;
     const out: Partial<AppState> = {};
-    if (v.filters && typeof v.filters === 'object') out.filters = { ...DEFAULT_FILTERS, ...v.filters };
+    if (v.filters && typeof v.filters === 'object') {
+      const f = { ...DEFAULT_FILTERS, ...v.filters };
+      f.includeNominal = f.includeNominal === true;
+      out.filters = f;
+    }
     if (v.extrude && ['flat', 'value', 'sqft', 'hold'].includes(v.extrude)) out.extrude = v.extrude;
     if (v.shade && ['class', 'value', 'sqft', 'hold', 'ltv'].includes(v.shade)) out.shade = v.shade;
     if (v.basemap && ['dark', 'hybrid', 'split'].includes(v.basemap)) out.basemap = v.basemap;
@@ -43,6 +47,26 @@ export function loadSavedView(): Partial<AppState> {
     return out;
   } catch {
     return {};
+  }
+}
+
+/** Per-viewer UI conveniences (open sections, collapsed legend, dismissed hint); never required. */
+export function loadUi<T extends object>(fallback: T): T {
+  try {
+    const raw = window.localStorage.getItem(UI_KEY);
+    return raw ? { ...fallback, ...(JSON.parse(raw) as Partial<T>) } : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export function saveUi(patch: Record<string, unknown>): void {
+  try {
+    const raw = window.localStorage.getItem(UI_KEY);
+    const cur = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+    window.localStorage.setItem(UI_KEY, JSON.stringify({ ...cur, ...patch }));
+  } catch {
+    /* storage unavailable: the UI just forgets */
   }
 }
 

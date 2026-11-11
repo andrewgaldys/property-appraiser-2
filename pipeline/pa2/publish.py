@@ -25,6 +25,7 @@ from .config import (
     AS_OF_YEAR,
     COUNTIES,
     DETAIL_FIELDS,
+    NOMINAL_VALUE_MAX,
     OUT_DIR,
     OWNER_ITEM_FIELDS,
     POINT_FIELDS,
@@ -145,8 +146,15 @@ def publish(
     write_geojson: bool = False,
     work_dir: Path = OUT_DIR,
     log=print,
+    nominal_value_max: int = NOMINAL_VALUE_MAX,
+    sales_coverage: dict | None = None,
+    min_sale_price: int = 100,
 ) -> dict:
-    """records: dicts with the standardized base fields + shapely `geometry` (EPSG:4326)."""
+    """records: dicts with the standardized base fields + shapely `geometry` (EPSG:4326).
+
+    sales_coverage: per county code (str) {"from": year records are complete from, "depth": "all" |
+    "recent5" | "latest" | "window", "source": text}, shown by the frontend next to hold periods.
+    """
     import shapely
 
     if not records:
@@ -156,7 +164,7 @@ def publish(
 
     # 1. Derived fields, label points, stable feature ids.
     for r in records:
-        finalize_record(r, as_of_year)
+        finalize_record(r, as_of_year, nominal_value_max)
         g = r["geometry"]
         p = shapely.point_on_surface(g)
         r["lon"], r["lat"] = round(p.x, 6), round(p.y, 6)
@@ -241,13 +249,15 @@ def publish(
     # 6. Manifest.
     manifest = build_manifest(records, names_idx, addrs_idx, source_kind=source_kind, source_label=source_label,
                               attribution=attribution, tax_roll_year=tax_roll_year, as_of_year=as_of_year,
-                              shard_hex=shard_hex, tiler=tiler)
+                              shard_hex=shard_hex, tiler=tiler, nominal_value_max=nominal_value_max,
+                              sales_coverage=sales_coverage, min_sale_price=min_sale_price)
     _dump(out_dir / "manifest.json", manifest)
     return manifest
 
 
 def build_manifest(records, names_idx, addrs_idx, *, source_kind, source_label, attribution, tax_roll_year,
-                   as_of_year, shard_hex, tiler) -> dict:
+                   as_of_year, shard_hex, tiler, nominal_value_max=NOMINAL_VALUE_MAX, sales_coverage=None,
+                   min_sale_price=100) -> dict:
     import shapely
 
     bounds = [round(v, 5) for v in shapely.total_bounds([r["geometry"] for r in records])]
@@ -290,8 +300,11 @@ def build_manifest(records, names_idx, addrs_idx, *, source_kind, source_label, 
         city_list.append({"name": name, "county": code, "count": len(rs),
                           "bbox": [xs[lo], ys[lo], xs[hi], ys[hi]]})
 
-    def metric(field):
-        return _quantiles([r.get(field) for r in records])
+    # Value ramps and stats skip nominal-value parcels ($100 common areas would anchor the low end).
+    valued = [r for r in records if not r.get("nominal_value")]
+
+    def metric(field, rows=records):
+        return _quantiles([r.get(field) for r in rows])
 
     tile_kind = "geojson" if tiler == "none" else "pmtiles"
     return {
@@ -313,19 +326,26 @@ def build_manifest(records, names_idx, addrs_idx, *, source_kind, source_label, 
         "stats": {
             "parcels": len(records),
             "just_value": sum(r["just_value"] or 0 for r in records),
-            "units": sum(r["no_res_unts"] or 0 for r in records),
+            "units": sum(r["residential_units"] or 0 for r in records),
+            "nominal_parcels": len(records) - len(valued),
             "building_sf": sum(r["tot_lvg_area"] or 0 for r in records),
             "owner_name_groups": len(names_idx),
             "owner_addr_groups": len(addrs_idx),
         },
         "quantiles": {
             "q": [0.05, 0.25, 0.5, 0.75, 0.95],
-            "just_value": metric("just_value"),
+            "just_value": metric("just_value", valued),
             "tot_lvg_area": metric("tot_lvg_area"),
             "hold_period_years": metric("hold_period_years"),
-            "land_to_value_ratio": metric("land_to_value_ratio"),
+            "land_to_value_ratio": metric("land_to_value_ratio", valued),
             "lot_acres": metric("lot_acres"),
         },
+        "data_quality": {
+            "nominal_value_max": nominal_value_max,
+            "nominal_parcels": len(records) - len(valued),
+            "min_sale_price": min_sale_price,
+        },
+        "sales_coverage": sales_coverage or {},
         "tiles": {
             "format": tile_kind,
             "polygons": {"url": "parcels.pmtiles" if tile_kind == "pmtiles" else "parcels.geojson",

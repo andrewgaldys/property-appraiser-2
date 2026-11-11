@@ -15,6 +15,17 @@ OUT_DIR = PIPELINE_DIR / "out"
 # hold_period_years = AS_OF_YEAR - last_sale_year. Override with PA2_AS_OF_YEAR or --as-of-year.
 AS_OF_YEAR = int(os.environ.get("PA2_AS_OF_YEAR", "2026"))
 
+# Parcels whose just value is below this are "nominal value": common areas, condo-style or
+# sub-parcels whose value is carried on another parcel (CityPlace's $100 parcels). The map keeps
+# them, but leaves them out of value screens and in-view totals by default.
+# Override with PA2_NOMINAL_VALUE_MAX or --nominal-value-max.
+NOMINAL_VALUE_MAX = int(os.environ.get("PA2_NOMINAL_VALUE_MAX", "1000"))
+
+# NO_RES_UNTS only means dwelling units on multifamily and mixed-use parcels. Elsewhere it holds
+# hotel rooms, mobile-home pads or placeholder 1s on offices and warehouses, so it is not shown.
+RESIDENTIAL_UNIT_CLASSES = ("MF10", "MF2_9")
+MIXED_USE_CODES = ("012",)  # DOR 012: store / office / residential combination
+
 
 @dataclass(frozen=True)
 class County:
@@ -50,7 +61,7 @@ TILE_FIELDS: dict[str, str] = {
     "bldg_to_land_ratio": "btl",
     "tot_lvg_area": "sf",
     "lnd_sqfoot": "lot",
-    "no_res_unts": "u",
+    "residential_units": "u",
     "act_yr_blt": "yb",
     "last_sale_price": "sp",
     "last_sale_year": "sy",
@@ -64,7 +75,7 @@ TILE_FIELDS: dict[str, str] = {
 # map needs to filter, color, highlight and label; the tooltip fetches the rest on demand.
 POINT_FIELDS: list[str] = [
     "parcel_id", "county_code", "asset_class", "use_code", "just_value", "tot_lvg_area", "lnd_sqfoot",
-    "no_res_unts", "hold_period_years", "hold_floor_years", "land_to_value_ratio", "bldg_to_land_ratio",
+    "residential_units", "hold_period_years", "hold_floor_years", "land_to_value_ratio", "bldg_to_land_ratio",
     "owner_name_key", "owner_addr_key",
 ]
 
@@ -88,7 +99,7 @@ DETAIL_FIELDS: list[str] = [
     "tot_lvg_area",
     "lnd_sqfoot",
     "lot_acres",
-    "no_res_unts",
+    "residential_units",
     "no_buldng",
     "act_yr_blt",
     "eff_yr_blt",
@@ -107,6 +118,7 @@ DETAIL_FIELDS: list[str] = [
     "hold_period_years",
     "no_sale_since",
     "hold_floor_years",
+    "sales_from",
     "owner_name_key",
     "owner_addr_key",
     "legal_desc",
@@ -125,7 +137,7 @@ OWNER_ITEM_FIELDS: list[str] = [
     "site_city",
     "just_value",
     "tot_lvg_area",
-    "no_res_unts",
+    "residential_units",
     "owner_name",
     "owner_name_key",
     "owner_addr_key",

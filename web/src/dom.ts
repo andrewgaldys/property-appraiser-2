@@ -49,6 +49,11 @@ const ICONS: Record<string, string> = {
   focus: 'M8 5.5a2.5 2.5 0 110 5 2.5 2.5 0 010-5zM8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2',
   filters: 'M2.5 4h11M4.5 8h7M6.5 12h3',
   arrow: 'M6 3.5L10.5 8 6 12.5',
+  chevron: 'M4.5 6.25L8 9.75l3.5-3.5',
+  info: 'M8 2a6 6 0 110 12A6 6 0 018 2zM8 7.2v4M8 4.9v.2',
+  legend: 'M2.5 4.5h2M6.5 4.5h7M2.5 8h2M6.5 8h7M2.5 11.5h2M6.5 11.5h7',
+  warn: 'M8 2.5l6 10.5H2zM8 6.5v3M8 11.2v.2',
+  pin: 'M8 14s4.5-4.2 4.5-7.5a4.5 4.5 0 10-9 0C3.5 9.8 8 14 8 14zM8 5.2a1.3 1.3 0 110 2.6 1.3 1.3 0 010-2.6z',
 };
 
 export function icon(name: keyof typeof ICONS | string, size = 14): SVGSVGElement {
@@ -63,7 +68,8 @@ export function icon(name: keyof typeof ICONS | string, size = 14): SVGSVGElemen
   path.setAttribute('fill', 'none');
   path.setAttribute('stroke', 'currentColor');
   path.setAttribute('stroke-width', '1.4');
-  path.setAttribute('stroke-linecap', 'square');
+  path.setAttribute('stroke-linecap', 'round');
+  path.setAttribute('stroke-linejoin', 'round');
   svg.append(path);
   return svg;
 }

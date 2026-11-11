@@ -19,8 +19,13 @@ import re
 from collections import defaultdict
 from collections.abc import Iterable
 
-from .config import AGENT_ADDRESS_NAME_THRESHOLD, PORTFOLIO_MAX_ITEMS
+from .config import AGENT_ADDRESS_NAME_THRESHOLD, MIXED_USE_CODES, PORTFOLIO_MAX_ITEMS, RESIDENTIAL_UNIT_CLASSES
 from .util import clean_str, zip5
+
+
+def residential_use(r: dict) -> bool:
+    """Whether NO_RES_UNTS counts dwelling units on this parcel (multifamily, mixed use)."""
+    return r.get("asset_class") in RESIDENTIAL_UNIT_CLASSES or r.get("use_code") in MIXED_USE_CODES
 
 # ---------------------------------------------------------------------------
 # Owner names
@@ -194,7 +199,11 @@ def _portfolio_entry(members: Iterable[dict], label: str, item_fields: list[str]
         "label": label,
         "count": len(members),
         "jv": sum(r.get("just_value") or 0 for r in members),
-        "units": sum(r.get("no_res_unts") or 0 for r in members),
+        # Dwelling units only (multifamily, mixed use); `res` says how many parcels can carry them, so the
+        # frontend labels a mixed portfolio's total "residential units".
+        "units": sum(r.get("residential_units") or 0 for r in members),
+        "res": sum(1 for r in members if residential_use(r)),
+        "nominal": sum(1 for r in members if r.get("nominal_value")),
         "sf": sum(r.get("tot_lvg_area") or 0 for r in members),
         "counties": dict(sorted(counties.items())),
         "items": [[r.get(f) for f in item_fields] for r in members[:PORTFOLIO_MAX_ITEMS]],

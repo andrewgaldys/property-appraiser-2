@@ -1,10 +1,10 @@
 /* Property brief: on-screen print preview + Letter print layout (black on white). */
-#brief-root { position: fixed; inset: 0; z-index: 40; overflow-y: auto; background: #2a2a2a; padding: 64px 16px 40px; }
+#brief-root { position: fixed; inset: 0; z-index: 40; overflow-y: auto; background: #252a31; padding: 64px 16px 40px; }
 #brief-root[hidden] { display: none; }
 .brief-toolbar { position: fixed; top: 0; left: 0; right: 0; z-index: 41; display: flex; align-items: center; gap: 8px; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line-strong); }
-.brief-title { flex: 1; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--text-2); }
+.brief-title { flex: 1; font-size: 13px; color: var(--text-2); }
 .brief-page { width: 8.5in; max-width: 100%; min-height: 11in; margin: 0 auto; padding: .45in; background: #fff; color: #111; font: 10.5px/1.4 var(--font); }
-.bp-band { display: flex; justify-content: space-between; background: #0a0a0a; color: #fff; padding: 7px 10px; font-size: 10px; letter-spacing: .14em; text-transform: uppercase; }
+.bp-band { display: flex; justify-content: space-between; background: #14181d; color: #fff; padding: 7px 10px; font-size: 10px; letter-spacing: .14em; text-transform: uppercase; }
 .bp-title { padding: 12px 0 10px; border-bottom: 1px solid #111; }
 .bp-badges { display: flex; gap: 6px; margin-bottom: 6px; }
 .bp-badges span { border: 1px solid #111; padding: 1px 6px; font-size: 9px; letter-spacing: .1em; text-transform: uppercase; }

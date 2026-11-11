@@ -1,8 +1,20 @@
 import { APP_NAME, APP_VERSION, CLASS_BADGE, CLASS_SHORT, COUNTY_META } from '../config';
 import { clear, h, icon } from '../dom';
-import { int, money, moneyFull, parcelId, pct, saleDate, shortDate, titleCase } from '../format';
+import { acres, int, money, moneyFull, parcelId, pct, saleDate, shortDate, sqft, titleCase } from '../format';
 import type { Manifest, ParcelRecord, Portfolio } from '../types';
-import { holdCaption, physicalFacts, portfolioSummary, saleFacts, signals, type Fact } from './facts';
+import {
+  holdInfo,
+  isNominal,
+  physicalFacts,
+  portfolioMetrics,
+  portfolioSummary,
+  present,
+  saleFacts,
+  signals,
+  unitsApply,
+  valueFacts,
+  type Fact,
+} from './facts';
 
 const rows = (facts: Fact[]) =>
   h('table', { class: 'bp-table' }, h('tbody', null, facts.map((f) => h('tr', null, h('th', null, f.k), h('td', null, f.v, f.sub ? h('small', null, ` (${f.sub})`) : null)))));
@@ -30,7 +42,10 @@ export class Brief {
     const landShare = jv > 0 ? Math.min((r.land_value ?? 0) / jv, 1) : 0;
     const today = shortDate(new Date().toISOString());
     const sample = manifest.source.kind === 'sample';
-    const flags = signals(r);
+    const flags = signals(r, manifest);
+    const hold = holdInfo(r, manifest);
+    const nominal = isNominal(r.just_value, manifest);
+    const units = unitsApply(r.asset_class, r.use_code) ? r.residential_units : null;
     const pfItems = portfolio ? portfolio.items.slice(0, 10) : [];
 
     const printBtn = h('button', { type: 'button', class: 'btn solid', onclick: () => window.print() }, icon('print'), 'Print / Save as PDF');
@@ -54,7 +69,7 @@ export class Brief {
         h(
           'div',
           { class: 'bp-sub' },
-          `${titleCase(r.site_city)}, FL ${r.site_zip} · Parcel ${parcelId(r.parcel_id, r.county_code)} · DOR ${r.use_code ?? '—'} ${r.use_description}`,
+          `${titleCase(r.site_city)}, FL ${r.site_zip} · Parcel ${parcelId(r.parcel_id, r.county_code)} · ${r.use_description}${r.use_code ? ` · DOR ${r.use_code}` : ''}`,
         ),
         r.legal_desc ? h('div', { class: 'bp-legal' }, `Legal: ${r.legal_desc}`) : null,
       ),
@@ -77,10 +92,16 @@ export class Brief {
       h(
         'section',
         { class: 'bp-keys' },
-        h('div', { class: 'bp-key' }, h('span', null, 'Just value'), h('b', null, moneyFull(r.just_value))),
-        h('div', { class: 'bp-key' }, h('span', null, 'Land / improvements'), h('b', null, `${pct(landShare)} / ${pct(jv > 0 ? 1 - landShare : 0)}`)),
+        h(
+          'div',
+          { class: 'bp-key' },
+          h('span', null, 'Assessed market value'),
+          h('b', null, nominal ? 'Nominal' : moneyFull(r.just_value)),
+          nominal ? h('small', null, `${moneyFull(r.just_value)} on the roll: likely a common-area or sub-parcel`) : null,
+        ),
+        h('div', { class: 'bp-key' }, h('span', null, 'Land / buildings'), h('b', null, nominal ? '—' : `${pct(landShare)} / ${pct(jv > 0 ? 1 - landShare : 0)}`)),
         h('div', { class: 'bp-key' }, h('span', null, 'Last sale'), h('b', null, moneyFull(r.last_sale_price)), h('small', null, saleDate(r.last_sale_year, r.last_sale_month))),
-        h('div', { class: 'bp-key' }, h('span', null, 'Hold period'), h('b', null, r.hold_period_years != null ? `${r.hold_period_years} yrs` : '—'), h('small', null, holdCaption(r))),
+        h('div', { class: 'bp-key' }, h('span', null, 'Years held'), h('b', null, hold.text), h('small', null, hold.caption)),
       ),
       h(
         'section',
@@ -88,25 +109,32 @@ export class Brief {
         h(
           'div',
           null,
-          h('h2', null, 'Valuation & physicals'),
-          rows([
-            { k: 'Just value', v: moneyFull(r.just_value) },
-            ...(r.assessed_value != null ? [{ k: 'Assessed value (non-school)', v: moneyFull(r.assessed_value) }] : []),
-            { k: 'Land value', v: moneyFull(r.land_value) },
-            { k: 'Improvement value', v: moneyFull(r.building_value) },
-            ...physicalFacts(r),
-          ]),
+          h('h2', null, 'Value, building & lot'),
+          rows(
+            present([
+              { k: 'Assessed market value', v: moneyFull(r.just_value) },
+              { k: 'Land value', v: moneyFull(r.land_value) },
+              { k: 'Building value', v: moneyFull(r.building_value) },
+              ...valueFacts(r, manifest),
+              { k: 'Building', v: sqft(r.tot_lvg_area) },
+              { k: 'Lot', v: acres(r.lnd_sqfoot), sub: r.lnd_sqfoot ? `${int(r.lnd_sqfoot)} SF` : undefined },
+              ...(units ? [{ k: 'Residential units', v: int(units) }] : []),
+              ...physicalFacts(r),
+            ]),
+          ),
         ),
         h(
           'div',
           null,
           h('h2', null, 'Last sale & hold'),
-          rows([
-            { k: 'Last sale price', v: moneyFull(r.last_sale_price) },
-            { k: 'Sale date', v: saleDate(r.last_sale_year, r.last_sale_month) },
-            { k: 'Hold period', v: r.hold_period_years != null ? `${r.hold_period_years} years` : '—' },
-            ...saleFacts(r),
-          ]),
+          rows(
+            present([
+              { k: 'Last sale price', v: moneyFull(r.last_sale_price) },
+              { k: 'Sale date', v: saleDate(r.last_sale_year, r.last_sale_month) },
+              { k: 'Years held', v: hold.text },
+              ...saleFacts(r, manifest),
+            ]),
+          ),
           h('h2', null, 'Screening flags'),
           flags.length ? h('ul', { class: 'bp-flags' }, flags.map((f) => h('li', null, f))) : h('p', { class: 'bp-muted' }, 'None'),
         ),
@@ -120,7 +148,7 @@ export class Brief {
           ? h(
               'p',
               { class: 'bp-muted' },
-              `${portfolioSummary(portfolio)}. Matched on `,
+              `${portfolioSummary(portfolio)}${portfolioMetrics(portfolio) ? ` · ${portfolioMetrics(portfolio)}` : ''}. Matched on `,
               [portfolio.byName ? `owner name (${int(portfolio.byName.count)})` : null, portfolio.byAddr ? `normalized mailing address (${int(portfolio.byAddr.count)})` : null]
                 .filter(Boolean)
                 .join(' and '),
@@ -131,7 +159,7 @@ export class Brief {
           ? h(
               'table',
               { class: 'bp-pf' },
-              h('thead', null, h('tr', null, ['County', 'Site address', 'City', 'Class', 'Owner of record', 'Just value', 'Match'].map((c) => h('th', null, c)))),
+              h('thead', null, h('tr', null, ['County', 'Site address', 'City', 'Class', 'Owner of record', 'Assessed value', 'Match'].map((c) => h('th', null, c)))),
               h(
                 'tbody',
                 null,
@@ -144,7 +172,7 @@ export class Brief {
                     h('td', null, titleCase(it.site_city)),
                     h('td', null, CLASS_SHORT[it.asset_class] ?? it.asset_class),
                     h('td', null, it.owner_name),
-                    h('td', { class: 'num' }, money(it.just_value)),
+                    h('td', { class: 'num' }, isNominal(it.just_value, manifest) ? 'Nominal' : money(it.just_value)),
                     h('td', null, it.match === 'both' ? 'Name+Addr' : it.match === 'name' ? 'Name' : 'Addr'),
                   ),
                 ),
@@ -158,9 +186,9 @@ export class Brief {
       h(
         'footer',
         { class: 'bp-foot' },
-        `Source: ${manifest.source.label}${manifest.source.tax_roll_year ? ` (${manifest.source.tax_roll_year} roll)` : ''}. `,
-        'Just value is the property appraiser’s market value as reported on the FDOR tax roll, not an appraisal. ',
-        `Hold period = ${manifest.source.as_of_year} − year of last recorded sale. `,
+        `Source: ${manifest.source.label}${manifest.source.tax_roll_year && !manifest.source.label.includes(String(manifest.source.tax_roll_year)) ? ` (${manifest.source.tax_roll_year} roll)` : ''}. `,
+        'Assessed market value is the property appraiser’s just value on the FDOR tax roll, not an appraisal. ',
+        `Years held = ${manifest.source.as_of_year} − year of the last sale of ${money(manifest.data_quality?.min_sale_price ?? 100)} or more; "N+" marks a minimum where the sale predates the county’s complete records. `,
         'Owner portfolios are resolved by normalized owner name and mailing address and may include unrelated entities that share an agent address. ',
         sample ? 'SAMPLE DATA: all parcels, owners and values are synthetic. ' : '',
       ),

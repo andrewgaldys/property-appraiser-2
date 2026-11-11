@@ -13,26 +13,38 @@ import {
   LOT_STEPS_AC,
   SHADE_MODES,
 } from '../config';
-import { appendAll, h } from '../dom';
+import { appendAll, h, icon, type Child } from '../dom';
 import { compact, int, money, shortDate } from '../format';
-import type { Store } from '../state';
+import { nominalMax } from '../map/layers';
+import { loadUi, saveUi, type Store } from '../state';
 import type { AppState, Bbox, Filters, Manifest, ViewStats } from '../types';
+import { INFO, coverageDetail, coverageExample, coverageLine } from './facts';
+import { infoTip } from './infotip';
 
 export interface FilterPanelHandlers {
   onCounty(code: number | null): void;
   onMarket(bbox: Bbox): void;
 }
 
+export type SectionId = 'county' | 'markets' | 'classes' | 'screens' | 'display';
+const SECTION_DEFAULTS: Record<SectionId, boolean> = {
+  county: true,
+  markets: true,
+  classes: true,
+  screens: false,
+  display: false,
+};
+
 type SegButton<T> = { value: T; el: HTMLButtonElement };
 
 function segmented<T extends string | number>(
   label: string,
-  options: { value: T; label: string }[],
+  options: { value: T; label: string; title?: string }[],
   onPick: (v: T) => void,
 ): { el: HTMLElement; buttons: SegButton<T>[] } {
   const buttons = options.map((o) => ({
     value: o.value,
-    el: h('button', { type: 'button', class: 'seg-btn', role: 'radio', onclick: () => onPick(o.value) }, o.label),
+    el: h('button', { type: 'button', class: 'seg-btn', role: 'radio', title: o.title, onclick: () => onPick(o.value) }, o.label),
   }));
   const el = h('div', { class: 'seg', role: 'radiogroup', 'aria-label': label }, buttons.map((b) => b.el));
   el.style.setProperty('--n', String(options.length));
@@ -47,34 +59,42 @@ function markSeg<T>(buttons: SegButton<T>[], active: T): void {
   }
 }
 
-const lotLabel = (step: number) => {
+export const lotLabel = (step: number): string => {
   const ac = LOT_STEPS_AC[step] ?? 0;
-  return ac === 0 ? 'Any' : `≥ ${ac} AC · ${int(ac * 43560)} SF`;
+  return ac === 0 ? 'Any' : `${ac} AC+`;
 };
-const btlLabel = (step: number) => {
+export const btlLabel = (step: number): string => {
   const r = BTL_STEPS[step] ?? Infinity;
   return Number.isFinite(r) ? `≤ ${r.toFixed(2)}×` : 'Any';
 };
-const btlCaption = (step: number) => {
+export const holdLabel = (y: number): string => (y === 0 ? 'Any' : `${y}+ yrs`);
+const btlCaption = (step: number): string | null => {
   const r = BTL_STEPS[step] ?? Infinity;
-  return Number.isFinite(r)
-    ? `Improvements worth ≤ ${Math.round(r * 100)}% of land value. Vacant land always passes.`
-    : 'Building value ÷ land value. Low ratios flag covered-land and teardown plays.';
+  return Number.isFinite(r) ? `Buildings worth at most ${Math.round(r * 100)}% of the land.` : null;
 };
-const holdLabel = (y: number) => (y === 0 ? 'Any' : `≥ ${y} yrs`);
+
+/** Active screens, for the sidebar summary. */
+export function activeScreens(f: Filters): number {
+  return (f.minHold > 0 ? 1 : 0) + (f.lotStep > 0 ? 1 : 0) + (f.btlStep > 0 ? 1 : 0);
+}
+
+interface RangeRow {
+  input: HTMLInputElement;
+  out: HTMLElement;
+}
 
 export class FilterPanel {
+  private ui = loadUi({ sections: { ...SECTION_DEFAULTS } as Record<SectionId, boolean> });
+  private sections = new Map<SectionId, { el: HTMLDetailsElement; sum: HTMLElement }>();
   private countySeg!: { el: HTMLElement; buttons: SegButton<number>[] };
   private extrudeSeg!: { el: HTMLElement; buttons: SegButton<string>[] };
   private shadeSeg!: { el: HTMLElement; buttons: SegButton<string>[] };
   private chips: { code: string; el: HTMLButtonElement }[] = [];
   private allChip!: HTMLButtonElement;
-  private ranges!: {
-    hold: { input: HTMLInputElement; out: HTMLElement };
-    lot: { input: HTMLInputElement; out: HTMLElement };
-    btl: { input: HTMLInputElement; out: HTMLElement; cap: HTMLElement };
-  };
-  private kpi!: Record<keyof ViewStats, HTMLElement>;
+  private ranges!: { hold: RangeRow; lot: RangeRow; btl: RangeRow & { cap: HTMLElement } };
+  private nominalToggle!: HTMLInputElement;
+  private kpi!: Record<'parcels' | 'jv' | 'units' | 'sf', HTMLElement>;
+  private inviewNote!: HTMLElement;
   private resetBtn!: HTMLButtonElement;
 
   constructor(
@@ -83,6 +103,7 @@ export class FilterPanel {
     private store: Store<AppState>,
     private handlers: FilterPanelHandlers,
   ) {
+    this.ui.sections = { ...SECTION_DEFAULTS, ...this.ui.sections };
     this.render();
     this.sync(store.get());
     store.subscribe((s, prev) => {
@@ -94,9 +115,36 @@ export class FilterPanel {
     this.store.set({ filters: { ...this.store.get().filters, ...patch } });
   }
 
+  /** Open (and scroll to) a sidebar section: used by the first-visit hint. */
+  openSection(id: SectionId): void {
+    const s = this.sections.get(id);
+    if (!s) return;
+    s.el.open = true;
+    s.el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    s.el.querySelector('summary')?.focus({ preventScroll: true });
+  }
+
+  private section(id: SectionId, title: string, ...body: Child[]): HTMLDetailsElement {
+    const sum = h('span', { class: 'sec-sum' });
+    const el = h(
+      'details',
+      { class: 'sec', 'data-sec': id },
+      h('summary', null, h('span', { class: 'sec-title' }, title), sum, icon('chevron', 16)),
+      h('div', { class: 'sec-body' }, body),
+    ) as HTMLDetailsElement;
+    el.open = this.ui.sections[id];
+    el.addEventListener('toggle', () => {
+      this.ui.sections[id] = el.open;
+      saveUi({ sections: this.ui.sections });
+    });
+    this.sections.set(id, { el, sum });
+    return el;
+  }
+
   private render(): void {
     const m = this.manifest;
     const sample = m.source.kind === 'sample';
+    const nominalCount = m.data_quality?.nominal_parcels ?? m.stats.nominal_parcels ?? 0;
 
     this.countySeg = segmented<number>(
       'County',
@@ -114,16 +162,15 @@ export class FilterPanel {
         h(
           'button',
           { type: 'button', class: 'market', title: `Fly to ${c.name}`, onclick: () => this.handlers.onMarket(c.bbox) },
-          h('span', null, c.name),
-          h('span', { class: 'n' }, `${COUNTY_META[c.county]?.short ?? ''} ${c.count}`),
+          h('span', { class: 'market-name' }, c.name),
+          h('span', { class: 'n' }, `${COUNTY_META[c.county]?.short ?? ''} · ${int(c.count)}`),
         ),
       ),
     );
 
-    this.allChip = h('button', { type: 'button', class: 'chip', onclick: () => this.setFilters({ classes: [] }) }, 'All');
-    this.chips = m.asset_classes.map((c) => ({
-      code: c.code,
-      el: h(
+    this.allChip = h('button', { type: 'button', class: 'chip chip-all', onclick: () => this.setFilters({ classes: [] }) }, 'All classes');
+    this.chips = m.asset_classes.map((c) => {
+      const el = h(
         'button',
         {
           type: 'button',
@@ -136,60 +183,75 @@ export class FilterPanel {
             this.setFilters({ classes: [...cur] });
           },
         },
-        h('i', { class: 'chip-sw', style: { background: CLASS_COLORS[c.code] ?? CLASS_FALLBACK } }),
-        CLASS_SHORT[c.code] ?? c.label,
+        h('i', { class: 'chip-sw' }),
+        h('span', { class: 'chip-label' }, CLASS_SHORT[c.code] ?? c.label),
         h('span', { class: 'n' }, int(c.count)),
-      ),
-    }));
+      );
+      el.style.setProperty('--c', CLASS_COLORS[c.code] ?? CLASS_FALLBACK);
+      return { code: c.code, el };
+    });
 
     const range = (label: string, min: number, max: number, onInput: (v: number) => void) => {
       const input = h('input', { type: 'range', min, max, step: 1, value: min, 'aria-label': label }) as HTMLInputElement;
       input.addEventListener('input', () => onInput(Number(input.value)));
       return input;
     };
-    const hold = { input: range('Minimum hold period', 0, HOLD_MAX, (v) => this.setFilters({ minHold: v })), out: h('output', null) };
+    const hold = { input: range('Minimum years held', 0, HOLD_MAX, (v) => this.setFilters({ minHold: v })), out: h('output', null) };
     const lot = {
       input: range('Minimum lot size', 0, LOT_STEPS_AC.length - 1, (v) => this.setFilters({ lotStep: v })),
       out: h('output', null),
     };
     const btl = {
-      input: range('Maximum building to land value ratio', 0, BTL_STEPS.length - 1, (v) => this.setFilters({ btlStep: v })),
+      input: range('Maximum building-to-land value', 0, BTL_STEPS.length - 1, (v) => this.setFilters({ btlStep: v })),
       out: h('output', null),
       cap: h('p', { class: 'cap' }),
     };
     this.ranges = { hold, lot, btl };
 
-    this.extrudeSeg = segmented<string>('3D extrusion', EXTRUDE_MODES.map((x) => ({ value: x.id, label: x.label })), (v) =>
+    this.nominalToggle = h('input', {
+      type: 'checkbox',
+      role: 'switch',
+      onchange: () => this.setFilters({ includeNominal: this.nominalToggle.checked }),
+    }) as HTMLInputElement;
+
+    this.extrudeSeg = segmented<string>('3D height', EXTRUDE_MODES.map((x) => ({ value: x.id, label: x.label })), (v) =>
       this.store.set({ extrude: v as AppState['extrude'] }),
     );
     this.shadeSeg = segmented<string>('Color by', SHADE_MODES.map((x) => ({ value: x.id, label: x.label })), (v) =>
       this.store.set({ shade: v as AppState['shade'] }),
     );
 
-    const kpi = (label: string) => {
+    const kpi = (label: string, info?: string) => {
       const v = h('div', { class: 'kpi-v' }, '—');
-      return { tile: h('div', { class: 'kpi' }, h('div', { class: 'kpi-k' }, label), v), v };
+      return {
+        tile: h('div', { class: 'kpi' }, h('div', { class: 'kpi-k' }, label, info ? infoTip(label, info) : null), v),
+        v,
+      };
     };
     const kp = kpi('Parcels');
-    const kj = kpi('Just value');
-    const ku = kpi('Units');
-    const ks = kpi('Bldg SF');
+    const kj = kpi('Assessed value', `Sum of the assessed market value of the parcels in view. ${INFO.marketValue}`);
+    const ku = kpi('Residential units', INFO.units);
+    const ks = kpi('Building SF');
     this.kpi = { parcels: kp.v, jv: kj.v, units: ku.v, sf: ks.v };
+    this.inviewNote = h('p', { class: 'inview-note', hidden: true });
 
     this.resetBtn = h(
       'button',
-      {
-        type: 'button',
-        class: 'btn ghost',
-        onclick: () => {
-          this.store.set({ filters: { ...DEFAULT_FILTERS } });
-        },
-      },
-      'Reset filters',
+      { type: 'button', class: 'btn ghost sm', onclick: () => this.store.set({ filters: { ...DEFAULT_FILTERS } }) },
+      'Reset all filters',
     );
 
-    const rangeRow = (label: string, r: { input: HTMLInputElement; out: HTMLElement }, extra?: HTMLElement) =>
-      h('label', { class: 'range' }, h('span', { class: 'range-head' }, h('span', null, label), r.out), r.input, extra);
+    const rangeRow = (label: string, r: RangeRow, info?: Child, ...extra: Child[]) =>
+      h(
+        'div',
+        { class: 'range' },
+        h('div', { class: 'range-head' }, h('span', { class: 'range-label' }, label, info), r.out),
+        r.input,
+        ...extra,
+      );
+
+    const coverage = coverageLine(m);
+    const max = nominalMax(m);
 
     appendAll(
       this.root,
@@ -201,62 +263,55 @@ export class FilterPanel {
           'div',
           { class: 'brand-text' },
           h('div', { class: 'brand-name' }, APP_NAME),
-          h('div', { class: 'brand-sub' }, 'Parcel intelligence · Martin · St. Lucie · Palm Beach'),
+          h('div', { class: 'brand-sub' }, 'Commercial & multifamily parcels'),
         ),
         h('span', { class: 'brand-ver' }, APP_VERSION),
       ),
       sample
-        ? h(
-            'div',
-            { class: 'source-flag' },
-            h('strong', null, 'Sample data'),
-            ' Synthetic parcels for demonstration. Run the FDOR pipeline for the production roll.',
-          )
+        ? h('div', { class: 'source-flag' }, h('strong', null, 'Sample data.'), ' Synthetic parcels for demonstration only.')
         : null,
-      h('section', { class: 'blk' }, h('h3', null, 'County'), this.countySeg.el),
-      h('section', { class: 'blk' }, h('h3', null, 'Markets'), markets),
       h(
         'section',
-        { class: 'blk' },
-        h('h3', null, 'Asset class'),
-        h('div', { class: 'chips' }, this.allChip, this.chips.map((c) => c.el)),
+        { class: 'inview', 'aria-label': 'Totals for the parcels in view' },
+        h('div', { class: 'inview-head' }, h('h2', null, 'In view'), h('span', { class: 'inview-sub' }, 'after filters')),
+        h('div', { class: 'kpis' }, kp.tile, kj.tile, ku.tile, ks.tile),
+        this.inviewNote,
       ),
-      h(
-        'section',
-        { class: 'blk' },
-        h('h3', null, 'Screens'),
+      this.section('county', 'County', this.countySeg.el),
+      this.section('markets', 'Markets', markets),
+      this.section('classes', 'Asset class', h('div', { class: 'chips' }, this.allChip, this.chips.map((c) => c.el))),
+      this.section(
+        'screens',
+        'Screens',
         rangeRow(
-          'Min hold period',
+          'Min years held',
           hold,
-          h(
-            'p',
-            { class: 'cap' },
-            'Years since the last sale of $100 or more. A parcel whose last such sale is not on record passes ',
-            'when none is on record for at least that long (e.g. only a later $10 transfer).',
-          ),
+          infoTip('years held', () => coverageDetail(m)),
+          coverage ? h('p', { class: 'cap' }, coverage, ` Older holds show as a minimum, like “${coverageExample(m)}”.`) : null,
         ),
         rangeRow('Min lot size', lot),
-        rangeRow('Max building / land value', btl, btl.cap),
-      ),
-      h(
-        'section',
-        { class: 'blk' },
-        h('h3', null, '3D extrusion'),
-        this.extrudeSeg.el,
-        h('h3', { class: 'sub' }, 'Color by'),
-        this.shadeSeg.el,
-      ),
-      h(
-        'section',
-        { class: 'blk' },
-        h('h3', null, 'In view', h('span', { class: 'h3-note' }, 'filtered')),
-        h('div', { class: 'kpis' }, kp.tile, kj.tile, ku.tile, ks.tile),
+        rangeRow('Max building-to-land value', btl, infoTip('building-to-land value', INFO.btl), btl.cap),
         h(
-          'p',
-          { class: 'cap' },
-          `Dataset: ${int(m.stats.parcels)} parcels · ${money(m.stats.just_value)} just value · `,
-          `${int(m.stats.owner_addr_groups + m.stats.owner_name_groups)} owner groups resolved`,
+          'div',
+          { class: 'toggle-row' },
+          h(
+            'label',
+            { class: 'switch' },
+            this.nominalToggle,
+            h('span', { class: 'switch-track', 'aria-hidden': 'true' }),
+            h('span', { class: 'switch-label' }, 'Count nominal-value parcels'),
+          ),
+          infoTip(
+            'nominal-value parcels',
+            `Parcels assessed under ${money(max)} (${int(nominalCount)} in this dataset) are usually common areas, condo-style or sub-parcels whose value sits on a neighboring parcel, like CityPlace’s $100 parcels.\n\nThey stay on the map and keep their badge in the parcel panel, but value screens and the in-view totals leave them out unless this is on.`,
+          ),
         ),
+      ),
+      this.section(
+        'display',
+        'Display',
+        h('div', { class: 'field' }, h('div', { class: 'field-label' }, '3D height'), this.extrudeSeg.el),
+        h('div', { class: 'field' }, h('div', { class: 'field-label' }, 'Color by'), this.shadeSeg.el),
       ),
       h(
         'footer',
@@ -265,9 +320,13 @@ export class FilterPanel {
         h(
           'p',
           { class: 'cap' },
+          `${int(m.stats.parcels)} parcels · ${money(m.stats.just_value)} assessed · ${compact(m.stats.owner_addr_groups + m.stats.owner_name_groups)} owner groups`,
+        ),
+        h(
+          'p',
+          { class: 'cap' },
           `${m.source.label} · built ${shortDate(m.generated_at)}`,
-          m.source.tax_roll_year ? ` · roll ${m.source.tax_roll_year}` : '',
-          ` · hold = ${m.source.as_of_year} − sale year`,
+          m.source.tax_roll_year ? ` · ${m.source.tax_roll_year} roll` : '',
         ),
       ),
     );
@@ -280,9 +339,13 @@ export class FilterPanel {
     markSeg(this.shadeSeg.buttons, s.shade);
     const active = new Set(f.classes);
     this.allChip.classList.toggle('on', active.size === 0);
-    for (const c of this.chips) c.el.classList.toggle('on', active.has(c.code));
+    this.allChip.setAttribute('aria-pressed', String(active.size === 0));
+    for (const c of this.chips) {
+      c.el.classList.toggle('on', active.has(c.code));
+      c.el.setAttribute('aria-pressed', String(active.has(c.code)));
+    }
 
-    const setRange = (r: { input: HTMLInputElement; out: HTMLElement }, v: number, text: string) => {
+    const setRange = (r: RangeRow, v: number, text: string) => {
       if (Number(r.input.value) !== v) r.input.value = String(v);
       const max = Number(r.input.max) || 1;
       r.input.style.setProperty('--pct', `${(v / max) * 100}%`);
@@ -292,10 +355,27 @@ export class FilterPanel {
     setRange(this.ranges.hold, f.minHold, holdLabel(f.minHold));
     setRange(this.ranges.lot, f.lotStep, lotLabel(f.lotStep));
     setRange(this.ranges.btl, f.btlStep, btlLabel(f.btlStep));
-    this.ranges.btl.cap.textContent = btlCaption(f.btlStep);
+    const cap = btlCaption(f.btlStep);
+    this.ranges.btl.cap.textContent = cap ?? '';
+    this.ranges.btl.cap.hidden = !cap;
+    this.nominalToggle.checked = f.includeNominal;
 
-    const dirty =
-      f.counties.length > 0 || f.classes.length > 0 || f.minHold > 0 || f.lotStep > 0 || f.btlStep > 0;
+    // Section summaries: what is applied, readable while the section is collapsed.
+    const sum = (id: SectionId, text: string, on = false) => {
+      const s = this.sections.get(id)!;
+      s.sum.textContent = text;
+      s.sum.classList.toggle('on', on);
+    };
+    sum('county', f.counties.length === 1 ? COUNTY_META[f.counties[0]!]?.name ?? '' : 'All', f.counties.length > 0);
+    sum('markets', `${Math.min(this.manifest.cities.length, 8)} cities`);
+    sum('classes', f.classes.length ? `${f.classes.length} of ${this.chips.length}` : 'All', f.classes.length > 0);
+    const n = activeScreens(f);
+    sum('screens', n ? `${n} active` : 'None', n > 0);
+    const ext = EXTRUDE_MODES.find((x) => x.id === s.extrude)?.label ?? '';
+    const shade = SHADE_MODES.find((x) => x.id === s.shade)?.label ?? '';
+    sum('display', `${ext} · ${shade}`);
+
+    const dirty = f.counties.length > 0 || f.classes.length > 0 || n > 0 || f.includeNominal;
     this.resetBtn.disabled = !dirty;
   }
 
@@ -304,5 +384,9 @@ export class FilterPanel {
     this.kpi.jv.textContent = money(s.jv);
     this.kpi.units.textContent = s.units ? int(s.units) : '—';
     this.kpi.sf.textContent = s.sf ? compact(s.sf) : '—';
+    this.inviewNote.hidden = !s.nominal;
+    this.inviewNote.textContent = s.nominal
+      ? `${int(s.nominal)} nominal-value ${s.nominal === 1 ? 'parcel' : 'parcels'} in view not counted`
+      : '';
   }
 }

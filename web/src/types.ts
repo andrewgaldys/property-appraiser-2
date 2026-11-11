@@ -18,6 +18,14 @@ export interface ManifestCounty {
   bbox: Bbox;
 }
 
+export interface SalesCoverage {
+  /** Year from which the county's sale records are complete (null: latest transfer only). */
+  from: number | null;
+  /** all: every recorded transfer · recent5: the five most recent · latest: the latest only · window: the roll's sale window. */
+  depth: 'all' | 'recent5' | 'latest' | 'window';
+  source: string;
+}
+
 export interface ManifestAssetClass {
   code: string;
   label: string;
@@ -46,11 +54,23 @@ export interface Manifest {
   stats: {
     parcels: number;
     just_value: number;
+    /** Residential (multifamily + mixed-use) units. */
     units: number;
     building_sf: number;
     owner_name_groups: number;
     owner_addr_groups: number;
+    nominal_parcels?: number;
   };
+  /** Absent in older bundles. */
+  data_quality?: {
+    /** Just values below this are "nominal" (common areas, sub-parcels). */
+    nominal_value_max: number;
+    nominal_parcels: number;
+    /** Transfers below this price are not sales (hold periods ignore them). */
+    min_sale_price: number;
+  };
+  /** Per county code: how far back its sale records go (see SalesCoverage). */
+  sales_coverage?: Record<string, SalesCoverage>;
   quantiles: Record<'just_value' | 'tot_lvg_area' | 'hold_period_years' | 'land_to_value_ratio' | 'lot_acres', number[]> & {
     q: number[];
   };
@@ -84,6 +104,7 @@ export interface TileProps {
   btl?: number;
   sf?: number;
   lot?: number;
+  /** Residential units (multifamily and mixed-use parcels only). */
   u?: number;
   yb?: number;
   sp?: number;
@@ -114,7 +135,8 @@ export interface ParcelRecord {
   tot_lvg_area: number | null;
   lnd_sqfoot: number | null;
   lot_acres: number | null;
-  no_res_unts: number | null;
+  /** Dwelling units: multifamily and mixed-use parcels only (null elsewhere). */
+  residential_units: number | null;
   no_buldng: number | null;
   act_yr_blt: number | null;
   eff_yr_blt: number | null;
@@ -131,8 +153,11 @@ export interface ParcelRecord {
   last_sale_qual_cd: string | null;
   last_sale_qualified: boolean | null;
   hold_period_years: number | null;
-  /** When no priced sale is on record: the year from which none is (see holdCaption). */
+  /** When the hold is not known exactly: the year from which no priced sale is on record. */
   no_sale_since?: number | null;
+  hold_floor_years?: number | null;
+  /** Year from which the county's sale records are complete (null: latest transfer only). */
+  sales_from?: number | null;
   owner_name_key: number | null;
   owner_addr_key: number | null;
   legal_desc: string;
@@ -152,7 +177,7 @@ export interface PortfolioItem {
   site_city: string;
   just_value: number | null;
   tot_lvg_area: number | null;
-  no_res_unts: number | null;
+  residential_units: number | null;
   owner_name: string;
   owner_name_key: number | null;
   owner_addr_key: number | null;
@@ -165,7 +190,12 @@ export interface PortfolioGroup {
   label: string;
   count: number;
   jv: number;
+  /** Residential units only. */
   units: number;
+  /** Parcels that can carry residential units (multifamily, mixed use). */
+  res?: number;
+  /** Nominal-value parcels in the group. */
+  nominal?: number;
   sf: number;
   counties: Record<string, number>;
   items: unknown[][];
@@ -181,7 +211,9 @@ export interface Portfolio {
   total: number;
   exact: boolean;
   jv: number;
+  /** Residential units only; `allResidential` says whether every parcel can carry them. */
   units: number;
+  allResidential: boolean;
   sf: number;
   counties: Record<string, number>;
 }
@@ -197,6 +229,8 @@ export interface Filters {
   minHold: number; // years, 0 = any
   lotStep: number; // index into LOT_STEPS_AC
   btlStep: number; // index into BTL_STEPS (0 = any)
+  /** Count nominal-value parcels in value screens and in-view totals (off by default). */
+  includeNominal: boolean;
 }
 
 export interface Selection {
@@ -221,4 +255,6 @@ export interface ViewStats {
   jv: number;
   units: number;
   sf: number;
+  /** Nominal-value parcels in view that the totals leave out. */
+  nominal: number;
 }

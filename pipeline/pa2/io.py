@@ -7,7 +7,8 @@ from pathlib import Path
 
 from .config import DETAIL_FIELDS
 
-PARQUET_COLUMNS = ["fid", *DETAIL_FIELDS]
+# The detail fields plus analysis-only columns the frontend does not need.
+PARQUET_COLUMNS = ["fid", *DETAIL_FIELDS, "no_res_unts", "nominal_value"]
 
 
 def write_parquet(records: list[dict], path: Path) -> None:

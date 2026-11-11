@@ -13,6 +13,8 @@ import {
   COLOR_SELECTED,
   HEIGHT_STOPS,
   LOT_STEPS_AC,
+  MAP_GROUND,
+  NOMINAL_VALUE_MAX,
   RAMP_FOCUS,
   RAMP_NORMAL,
   RAMP_POINTS,
@@ -43,12 +45,23 @@ type Expr = ExpressionSpecification;
 export type MetricMode = Exclude<ShadeMode, 'class'>;
 const num = (key: string, fallback: number): Expr => ['number', ['get', key], fallback];
 
-const SHADE_FIELD: Record<MetricMode, { tile: string; fallback: number; quantile: keyof Manifest['quantiles'] }> = {
-  value: { tile: 'jv', fallback: 0, quantile: 'just_value' },
-  sqft: { tile: 'sf', fallback: 0, quantile: 'tot_lvg_area' },
-  hold: { tile: 'hold', fallback: -1, quantile: 'hold_period_years' },
-  ltv: { tile: 'ltv', fallback: 0, quantile: 'land_to_value_ratio' },
+/**
+ * Years held: the known hold, else the parcel's minimum `hf` (its last priced sale predates the
+ * county's complete records, or only nominal transfers follow it), else -1 (not on record).
+ * A minimum is a better stand-in than "unknown" for color, height and the hold screen alike:
+ * a long-held parcel must never look short-held because its sale is older than the records.
+ */
+const HOLD_OR_FLOOR: Expr = ['number', ['coalesce', ['get', 'hold'], ['get', 'hf']], -1];
+
+const SHADE_FIELD: Record<MetricMode, { value: Expr; quantile: keyof Manifest['quantiles'] }> = {
+  value: { value: num('jv', 0), quantile: 'just_value' },
+  sqft: { value: num('sf', 0), quantile: 'tot_lvg_area' },
+  hold: { value: HOLD_OR_FLOOR, quantile: 'hold_period_years' },
+  ltv: { value: num('ltv', 0), quantile: 'land_to_value_ratio' },
 };
+
+/** Just values below this are nominal (common areas, sub-parcels): from the bundle, else the default. */
+export const nominalMax = (m: Manifest): number => m.data_quality?.nominal_value_max ?? NOMINAL_VALUE_MAX;
 
 /** Ramp breakpoints = dataset percentiles (p5..p95), forced strictly ascending. */
 export function shadeStops(manifest: Manifest, mode: MetricMode): number[] {
@@ -59,9 +72,8 @@ export function shadeStops(manifest: Manifest, mode: MetricMode): number[] {
 }
 
 function ramp(manifest: Manifest, mode: MetricMode, colors: string[]): Expr {
-  const f = SHADE_FIELD[mode];
   const stops = shadeStops(manifest, mode);
-  const out: unknown[] = ['interpolate', ['linear'], num(f.tile, f.fallback)];
+  const out: unknown[] = ['interpolate', ['linear'], SHADE_FIELD[mode].value];
   stops.forEach((s, i) => out.push(s, colors[Math.min(i, colors.length - 1)]));
   return out as Expr;
 }
@@ -78,7 +90,7 @@ function mix(hex: string, t: number, to: string): string {
 /** Asset-class color for every parcel; dim > 0 pushes toward the dark surface, lift > 0 toward white. */
 function classColors(dim = 0, lift = 0): Expr {
   const out: unknown[] = ['match', ['get', 'cls']];
-  const tone = (c: string) => (lift ? mix(c, lift, '#ffffff') : mix(c, dim, '#0b0b0b'));
+  const tone = (c: string) => (lift ? mix(c, lift, '#ffffff') : mix(c, dim, MAP_GROUND));
   for (const [code, color] of Object.entries(CLASS_COLORS)) out.push(code, tone(color));
   out.push(tone(CLASS_FALLBACK));
   return out as Expr;
@@ -174,12 +186,10 @@ export const pointStrokeWidth = (s: AppState): Expr => {
   return cases as Expr;
 };
 
-const HEIGHT_FIELD = { value: ['jv', 0], sqft: ['sf', 0], hold: ['hold', -1] } as const;
-
 export function heightExpr(mode: ExtrudeMode): Expr | number {
   if (mode === 'flat') return 0;
-  const [key, fallback] = HEIGHT_FIELD[mode];
-  return ['interpolate', ['linear'], num(key, fallback), ...HEIGHT_STOPS[mode]] as Expr;
+  const value = mode === 'value' ? num('jv', 0) : mode === 'sqft' ? num('sf', 0) : HOLD_OR_FLOOR;
+  return ['interpolate', ['linear'], value, ...HEIGHT_STOPS[mode]] as Expr;
 }
 
 /** The rim sits on the roof and rises 0.6 m, or 0.6% of the block height if that is more. */
@@ -190,13 +200,12 @@ export function rimHeights(mode: ExtrudeMode): { base: Expr | number; top: Expr 
 }
 
 /**
- * Hold period for screening: the known one, else the parcel's lower bound `hf` (no priced sale is on
- * record since as_of_year - hf, e.g. after a $10 transfer), else -1 (unknown: never passes).
+ * Screening filters; `rim` selects the roof-rim features instead of the parcels themselves.
+ * A parcel passes the hold screen on its known hold or its minimum (see HOLD_OR_FLOOR). Value
+ * screens skip nominal-value parcels unless they are included: a $100 common area has no
+ * meaningful building-to-land ratio.
  */
-const HOLD_OR_FLOOR: Expr = ['number', ['coalesce', ['get', 'hold'], ['get', 'hf']], -1];
-
-/** Screening filters; `rim` selects the roof-rim features instead of the parcels themselves. */
-export function filterExpr(f: Filters, part: 'body' | 'rim' = 'body'): FilterSpecification {
+export function filterExpr(f: Filters, part: 'body' | 'rim' = 'body', nominal = NOMINAL_VALUE_MAX): FilterSpecification {
   const all: unknown[] = ['all', part === 'rim' ? IS_RIM : NOT_RIM];
   if (f.counties.length) all.push(['in', ['get', 'co'], ['literal', f.counties]]);
   if (f.classes.length) all.push(['in', ['get', 'cls'], ['literal', f.classes]]);
@@ -204,7 +213,10 @@ export function filterExpr(f: Filters, part: 'body' | 'rim' = 'body'): FilterSpe
   const lotAc = LOT_STEPS_AC[f.lotStep] ?? 0;
   if (lotAc > 0) all.push(['>=', num('lot', 0), lotAc * 43560]);
   const btl = BTL_STEPS[f.btlStep] ?? Infinity;
-  if (Number.isFinite(btl)) all.push(['<=', num('btl', 1e9), btl]);
+  if (Number.isFinite(btl)) {
+    all.push(['<=', num('btl', 1e9), btl]);
+    if (!f.includeNominal) all.push(['>=', num('jv', 0), nominal]);
+  }
   return all as FilterSpecification;
 }
 
@@ -225,8 +237,8 @@ export function rimOpacity(s: AppState, rimMin: number): Expr {
 }
 
 /** Filter for a parcel layer id (the rim layer gets the rim variant). */
-export function layerFilter(id: string, f: Filters): FilterSpecification {
-  return filterExpr(f, id === L_RIM ? 'rim' : 'body');
+export function layerFilter(id: string, f: Filters, nominal = NOMINAL_VALUE_MAX): FilterSpecification {
+  return filterExpr(f, id === L_RIM ? 'rim' : 'body', nominal);
 }
 
 /** "4901" over "151K SF": house number + building size from the centroid layer. */
@@ -243,7 +255,8 @@ export function parcelLayers(manifest: Manifest, s: AppState, vector: boolean): 
   const polyMin = manifest.tiles.polygons.minzoom;
   const poly = vector ? { source: SRC_POLY, 'source-layer': manifest.tiles.polygons.layer } : { source: SRC_POLY };
   const pts = vector ? { source: SRC_PTS, 'source-layer': manifest.tiles.points.layer } : { source: SRC_PTS };
-  const filter = layerFilter(L_FLAT, s.filters);
+  const nominal = nominalMax(manifest);
+  const filter = layerFilter(L_FLAT, s.filters, nominal);
   const flat = s.extrude === 'flat';
   const color = colorExpr(manifest, s);
   const rimMin = manifest.tiles.polygons.rim_minzoom;
@@ -275,7 +288,7 @@ export function parcelLayers(manifest: Manifest, s: AppState, vector: boolean): 
       },
     },
     {
-      id: L_RIM, type: 'fill-extrusion', ...poly, minzoom: rimMin ?? 24, filter: layerFilter(L_RIM, s.filters),
+      id: L_RIM, type: 'fill-extrusion', ...poly, minzoom: rimMin ?? 24, filter: layerFilter(L_RIM, s.filters, nominal),
       layout: { visibility: flat || rimMin == null ? 'none' : 'visible' },
       paint: {
         'fill-extrusion-color': rimColor(s),
@@ -314,8 +327,8 @@ export function parcelLayers(manifest: Manifest, s: AppState, vector: boolean): 
         'symbol-sort-key': ['-', 0, num('jv', 0)],
       },
       paint: {
-        'text-color': '#ffffff',
-        'text-halo-color': 'rgba(0,0,0,0.88)',
+        'text-color': '#eef1f4',
+        'text-halo-color': 'rgba(14,17,21,0.9)',
         'text-halo-width': 1.4,
         'text-opacity': fade(LABEL_MIN_ZOOM, LABEL_MIN_ZOOM + 0.4, 1),
       },

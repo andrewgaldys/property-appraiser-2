@@ -1,4 +1,5 @@
 import type { GeoJSONSourceSpecification } from '@maplibre/maplibre-gl-style-spec';
+import { RESIDENTIAL_CLASSES } from './config';
 import type { Manifest, ParcelRecord, Portfolio, PortfolioGroup, PortfolioItem } from './types';
 
 /** 32-bit FNV-1a -> 8 hex chars. Must match pipeline/pa2/util.py fnv1a32 exactly. */
@@ -120,7 +121,9 @@ export class DataStore {
       return {
         byName, byAddr, items: list, total: list.length, exact,
         jv: list.reduce((s, it) => s + (it.just_value ?? 0), 0),
-        units: list.reduce((s, it) => s + (it.no_res_unts ?? 0), 0),
+        // Units only from multifamily / mixed-use parcels (the pipeline nulls them elsewhere).
+        units: list.reduce((s, it) => s + (it.residential_units ?? 0), 0),
+        allResidential: list.every((it) => RESIDENTIAL_CLASSES.has(it.asset_class) || it.residential_units != null),
         sf: list.reduce((s, it) => s + (it.tot_lvg_area ?? 0), 0),
         counties,
       };
@@ -129,7 +132,8 @@ export class DataStore {
     const big = (byName?.count ?? 0) >= (byAddr?.count ?? 0) ? byName! : byAddr!;
     return {
       byName, byAddr, items: list, total: Math.max(big.count, list.length), exact,
-      jv: big.jv, units: big.units, sf: big.sf, counties: big.counties,
+      jv: big.jv, units: big.units, allResidential: big.res != null && big.res >= big.count, sf: big.sf,
+      counties: big.counties,
     };
   }
 

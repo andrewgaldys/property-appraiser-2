@@ -41,7 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from pa2 import arcgis  # noqa: E402
 from pa2.arcgis import QueryFailed  # noqa: E402
-from pa2.config import AS_OF_YEAR, COUNTIES, COUNTY_CODES, OUT_DIR, RAW_DIR, WEB_DATA_DIR  # noqa: E402
+from pa2.config import AS_OF_YEAR, COUNTIES, COUNTY_CODES, NOMINAL_VALUE_MAX, OUT_DIR, RAW_DIR, WEB_DATA_DIR  # noqa: E402
 from pa2.dor_codes import ASSET_CLASSES, classify, normalize_use_code  # noqa: E402
 from pa2.util import clean_str, norm_parcel_id, to_float, to_int  # noqa: E402
 
@@ -298,13 +298,17 @@ def load_sdf_history(patterns: list[str], counties: list[int], min_price: int) -
     return latest, starts
 
 
-def merge_sales(records: dict[tuple[int, str], dict], args, counties: list[int]) -> None:
+def merge_sales(records: dict[tuple[int, str], dict], args, counties: list[int]) -> dict[str, dict]:
     """Fill each record's last priced sale from every source, or the year since which none is on record.
 
     Sources: the roll's own sale slots (already on the records), the county property appraisers
     (pa2.county_sales) and optional FDOR SDF files. The latest priced sale wins. Without one, each
     source's "none since" year still bounds the hold period from below; the earliest such year is
-    kept as `no_sale_since` (hold >= as_of_year - that year).
+    kept as `no_sale_since` (hold >= as_of_year - that year). A parcel no source knows anything about
+    gets neither: its hold is "not on record", never a short minimum from the roll's 2025-26 window.
+
+    Each county's `sales_from` (the year its records become complete) goes on its records, and the
+    returned coverage summary goes into the manifest for the frontend's coverage notes.
     """
     from collections import defaultdict
 
@@ -313,14 +317,14 @@ def merge_sales(records: dict[tuple[int, str], dict], args, counties: list[int])
 
     claims: dict[tuple[int, str], list[int]] = defaultdict(list)
     supplied: Counter[str] = Counter()
+    coverage: dict[str, dict] = {}
 
-    # The roll's two sale slots list every sale of its sales window, so a record without one had no
-    # sale in that window: a "none since" claim from the window's first year (2025 on the 2026 roll).
-    window_from = min((r["last_sale_year"] for r in records.values() if r["last_sale_year"]), default=None)
-    if window_from:
-        for key, rec in records.items():
-            if not rec["last_sale_year"]:
-                claims[key].append(window_from)
+    def covered(co: int, start: int | None, depth: str, source: str) -> None:
+        coverage[str(co)] = {"from": start, "depth": depth, "source": source}
+        if start:
+            for (c, _), rec in records.items():
+                if c == co:
+                    rec["sales_from"] = start
 
     def offer(source: str, key: tuple[int, str], facts: SaleFacts) -> None:
         rec = records.get(key)
@@ -339,10 +343,22 @@ def merge_sales(records: dict[tuple[int, str], dict], args, counties: list[int])
         root = args.county_sales_dir
         by_county = {co: {pid for (c, pid) in records if c == co} for co in counties}
         if by_county.get(60):
+            # The CAMA file's five most recent transfers first; the GIS table's latest transfer can be newer.
+            cama = county_sales.find_export(root / "palm_beach" / "cama", ("CAMA_CSV_*.zip", "*CAMA*.zip"))
+            if cama is not None:
+                facts, start = county_sales.palm_beach_cama(cama, by_county[60], args.min_sale_price)
+                for pid, f in facts.items():
+                    offer("Palm Beach CAMA", (60, pid), f)
+                covered(60, start, "recent5", county_sales.SOURCES[60])
+                print(f"  Palm Beach: {cama.name} has transfers for {len(facts):,} of {len(by_county[60]):,} parcels "
+                      f"(records complete from {start})")
+            else:
+                covered(60, None, "latest", "Palm Beach County GIS property table (latest transfer)")
+                print(f"  Palm Beach: no CAMA file under {root / 'palm_beach' / 'cama'} (see README): latest transfers only")
             facts = county_sales.palm_beach(sorted(by_county[60]), root / "palm_beach" / "latest_transfer.json.gz",
                                             args.min_sale_price, refresh=args.refresh_sales)
             for pid, f in facts.items():
-                offer("Palm Beach", (60, pid), f)
+                offer("Palm Beach GIS", (60, pid), f)
             print(f"  Palm Beach: latest transfer for {len(facts):,} of {len(by_county[60]):,} parcels")
         for co, name, reader, patterns in (
             (53, "Martin", county_sales.martin, ("*transfer*.zip", "*transfer*.csv")),
@@ -354,10 +370,12 @@ def merge_sales(records: dict[tuple[int, str], dict], args, counties: list[int])
             if path is None:
                 print(f"  {name}: no sales export under {root} (see README); its hold periods stay at the roll window")
                 continue
-            facts = reader(path, by_county[co], args.min_sale_price)
+            facts, start = reader(path, by_county[co], args.min_sale_price)
             for pid, f in facts.items():
                 offer(name, (co, pid), f)
-            print(f"  {name}: {path.name} has transfers for {len(facts):,} of {len(by_county[co]):,} parcels")
+            covered(co, start, "all", county_sales.SOURCES[co])
+            print(f"  {name}: {path.name} has transfers for {len(facts):,} of {len(by_county[co]):,} parcels "
+                  f"(records complete from {start})")
 
     history, starts = load_sdf_history(args.sdf, counties, args.min_sale_price)
     for key, s in history.items():
@@ -365,6 +383,9 @@ def merge_sales(records: dict[tuple[int, str], dict], args, counties: list[int])
     for key, rec in records.items():
         if key[0] in starts and not rec["last_sale_year"]:
             claims[key].append(starts[key[0]])
+    for co in counties:
+        coverage.setdefault(str(co), {"from": starts.get(co), "depth": "window" if co not in starts else "all",
+                                      "source": "FDOR SDF" if co in starts else "Tax roll sales window"})
 
     floors = 0
     for key, rec in records.items():
@@ -375,6 +396,7 @@ def merge_sales(records: dict[tuple[int, str], dict], args, counties: list[int])
     print(f"  sales: last priced sale known for {known:,} parcels ({known / n:.0%}); "
           f"a 'none since' minimum for {floors:,} more ({floors / n:.0%}); "
           f"newer sales supplied by {dict(supplied) or 'none'}")
+    return coverage
 
 
 def main() -> int:
@@ -392,6 +414,8 @@ def main() -> int:
     ap.add_argument("--simplify", type=float, default=0.000005,
                     help="server-side maxAllowableOffset in degrees (default ~0.5 m; 0 = full detail)")
     ap.add_argument("--min-sale-price", type=int, default=100, help="ignore nominal transfers below this")
+    ap.add_argument("--nominal-value-max", type=int, default=NOMINAL_VALUE_MAX,
+                    help="flag parcels with a just value below this as nominal (common areas, sub-parcels)")
     ap.add_argument("--county-sales-dir", type=Path, default=RAW_DIR / "county_sales",
                     help="county sale-history exports: martin/real_transfers.zip, stlucie/Transactions.zip "
                          "(Palm Beach is queried from the county GIS and cached in palm_beach/)")
@@ -498,7 +522,7 @@ def main() -> int:
     recs = list(records.values())
     print(f"{len(recs):,} parcels ({merged} multi-part pieces merged, {skipped} without geometry/ID skipped)")
 
-    merge_sales(records, args, counties)
+    coverage = merge_sales(records, args, counties)
 
     by_class = Counter(classify(normalize_use_code(r["use_code"])) for r in recs)
     by_county = Counter(r["county_code"] for r in recs)
@@ -522,6 +546,9 @@ def main() -> int:
         tiler=args.tiler,
         write_geojson=False,
         work_dir=OUT_DIR,
+        nominal_value_max=args.nominal_value_max,
+        sales_coverage=coverage,
+        min_sale_price=args.min_sale_price,
     )
     write_parquet(recs, OUT_DIR / "parcels.parquet")
     s = manifest["stats"]

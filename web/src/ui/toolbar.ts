@@ -3,24 +3,23 @@ import { h } from '../dom';
 import type { Store } from '../state';
 import type { AppState } from '../types';
 
-/** Map top bar: basemap mode (Dark / Hybrid / Split) + the [S] satellite lens toggle. */
+/** Map top bar: basemap mode (Map / Hybrid / Split) + the [S] satellite lens toggle. */
 export class Toolbar {
+  readonly el: HTMLElement;
   private modeButtons: { id: AppState['basemap']; el: HTMLButtonElement }[];
   private lensBtn: HTMLButtonElement;
 
-  constructor(container: HTMLElement, private store: Store<AppState>) {
+  constructor(private store: Store<AppState>) {
     this.modeButtons = BASEMAP_MODES.map((m) => ({
       id: m.id,
       el: h('button', { type: 'button', class: 'tb-btn', role: 'radio', title: m.title, onclick: () => store.set({ basemap: m.id }) }, m.label),
     }));
     this.lensBtn = h('button', { type: 'button', class: 'tb-btn tb-lens', onclick: () => this.toggleLens() });
-    container.append(
-      h(
-        'div',
-        { class: 'map-toolbar', role: 'toolbar', 'aria-label': 'Basemap and satellite' },
-        h('div', { class: 'tb-seg', role: 'radiogroup', 'aria-label': 'Basemap' }, this.modeButtons.map((b) => b.el)),
-        this.lensBtn,
-      ),
+    this.el = h(
+      'div',
+      { class: 'map-toolbar', role: 'toolbar', 'aria-label': 'Basemap and satellite' },
+      h('div', { class: 'tb-seg', role: 'radiogroup', 'aria-label': 'Basemap' }, this.modeButtons.map((b) => b.el)),
+      this.lensBtn,
     );
     this.sync(store.get());
     store.subscribe((s, prev) => {
@@ -47,11 +46,15 @@ export class Toolbar {
     }
     const usable = s.basemap === 'dark';
     this.lensBtn.textContent = '';
-    this.lensBtn.append(h('kbd', null, 'S'), ` Satellite Lens: ${s.lens ? 'ON' : 'OFF'}`);
+    this.lensBtn.append(
+      h('span', { class: 'tb-dot', 'aria-hidden': 'true' }),
+      'Satellite lens',
+      h('kbd', { 'aria-label': 'shortcut S' }, 'S'),
+    );
     this.lensBtn.classList.toggle('on', s.lens && usable);
     this.lensBtn.setAttribute('aria-pressed', String(s.lens));
     this.lensBtn.title = usable
-      ? `Imagery inside a lens around the cursor at zoom ${LENS_MIN_ZOOM}+ (press S)`
-      : 'The lens works on the Dark basemap; Hybrid and Split already show imagery';
+      ? `${s.lens ? 'On' : 'Off'}: imagery inside a lens around the cursor at zoom ${LENS_MIN_ZOOM}+ (press S)`
+      : 'The lens works on the Map basemap; Hybrid and Split already show imagery';
   }
 }
