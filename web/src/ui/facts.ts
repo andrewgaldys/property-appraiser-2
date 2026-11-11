@@ -137,6 +137,11 @@ export function holdShort(p: TileProps): string {
 
 const COVERAGE_ORDER = [60, 66, 53];
 
+/** Prospecting thresholds the data was built with (defaults for bundles that predate them). */
+export function prospectingRules(m: Manifest): { miles: number; small: [number, number] } {
+  return { miles: m.prospecting?.out_of_area_miles ?? 25, small: m.prospecting?.small_portfolio ?? [2, 10] };
+}
+
 /** "Sales on record from 1969 (Palm Beach), 1972 (St. Lucie) and 1977 (Martin)." or null without coverage info. */
 export function coverageLine(m: Manifest): string | null {
   const cov = m.sales_coverage;
@@ -178,7 +183,7 @@ export function signals(r: ParcelRecord, m: Manifest): string[] {
   const out: string[] = [];
   const st = (r.owner_state || '').trim().toUpperCase();
   if (r.out_of_area === 2 || (r.out_of_area === undefined && st && st !== 'FL')) out.push(`Out-of-state owner (${st})`);
-  else if (r.out_of_area === 1) out.push(`Owner mails from another county${r.owner_city ? ` (${titleCase(r.owner_city)})` : ''}`);
+  else if (r.out_of_area === 1) out.push(`Owner mails from elsewhere in Florida${r.owner_city ? ` (${titleCase(r.owner_city)})` : ''}`);
   if (r.estate_trust) out.push('Estate / trust owned');
   if (r.small_portfolio) out.push('Small portfolio owner');
   if (

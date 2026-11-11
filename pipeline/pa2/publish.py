@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import math
 import re
 import shutil
 import statistics
@@ -27,6 +28,8 @@ from .config import (
     AS_OF_YEAR,
     COUNTIES,
     DETAIL_FIELDS,
+    MAILING_PLACE_ALIASES,
+    OUT_OF_AREA_MILES,
     SMALL_PORTFOLIO,
     NOMINAL_VALUE_MAX,
     OUT_DIR,
@@ -98,8 +101,6 @@ def edge_bands(geoms: list, width_m: float) -> list:
     Buffered in a local metric frame (equirectangular at the data's mean latitude: under 1% scale
     error across the three counties), then mapped back to degrees.
     """
-    import math
-
     import numpy as np
     import shapely
 
@@ -184,44 +185,77 @@ def estate_trust(name: str | None) -> bool:
     return not (_CORP.search(s) and not _TRUSTEE.search(s))
 
 
+# Place-name spellings on the roll ("WEST PALM BCH", "PORT SAINT LUCIE") -> one form for matching.
+_PLACE_WORDS = {
+    "BCH": "BEACH", "BC": "BEACH", "PLM": "PALM", "GDNS": "GARDENS", "GDN": "GARDENS", "GRDNS": "GARDENS",
+    "SAINT": "ST", "PT": "PORT", "FT": "FORT", "MT": "MOUNT", "W": "WEST", "E": "EAST", "N": "NORTH",
+    "S": "SOUTH", "LK": "LAKE", "SHRS": "SHORES", "VLG": "VILLAGE", "HTS": "HEIGHTS", "SPGS": "SPRINGS",
+    "ISL": "ISLAND",
+}
+
+
+def _place(name: str | None) -> str:
+    words = re.sub(r"[^A-Z ]", " ", (name or "").upper()).split()
+    return " ".join(" ".join(_PLACE_WORDS.get(w, w) for w in words).split())
+
+
+def _center(points: list[tuple[float, float]]) -> tuple[float, float]:
+    """Median lon / lat: a ZIP's or city's middle, robust to a few mis-addressed parcels."""
+    return statistics.median(p[0] for p in points), statistics.median(p[1] for p in points)
+
+
+def _miles(a: tuple[float, float], b: tuple[float, float]) -> float:
+    (lon1, lat1), (lon2, lat2) = a, b
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    h = math.sin((p2 - p1) / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(math.radians(lon2 - lon1) / 2) ** 2
+    return 7917.6 * math.asin(math.sqrt(h))  # great circle, Earth's mean diameter in miles
+
+
 def prospect_flags(records: list[dict]) -> dict:
     """Per-parcel flags behind the prospecting presets; returns counts for the log and manifest.
 
-    out_of_area: 2 when the owner's mailing state is not Florida; 1 when it is Florida but outside the
-    parcel's county. Mailing ZIPs (else cities) are placed in a county by where this dataset's own
-    parcels with that site ZIP (city) are; a Florida ZIP or city with no parcels here is outside all
-    three counties. Approximate where a ZIP straddles a county line.
+    out_of_area: 2 when the owner's mailing state is not Florida. 1 when it is Florida and either the
+    mailing address is outside the three counties, or it is inside them but more than
+    OUT_OF_AREA_MILES from the parcel. Mailing places are located with this dataset's own parcels: the
+    median point of the parcels with that site ZIP (else site city, spellings normalized), so the
+    distance runs from the middle of the owner's ZIP to the parcel. A Florida ZIP or city with no
+    parcels here is outside the three counties. No ZIP and no city stays unknown.
     """
-    zips: dict[str, dict[int, int]] = defaultdict(lambda: defaultdict(int))
-    cities: dict[str, dict[int, int]] = defaultdict(lambda: defaultdict(int))
+    zpts: dict[str, list[tuple[float, float]]] = defaultdict(list)
+    cpts: dict[str, list[tuple[float, float]]] = defaultdict(list)
     for r in records:
+        pt = (r["lon"], r["lat"])
         if r["site_zip"]:
-            zips[r["site_zip"]][r["county_code"]] += 1
-        if r["site_city"]:
-            cities[r["site_city"].upper()][r["county_code"]] += 1
-    zip_county = {z: max(c, key=c.get) for z, c in zips.items()}
-    city_county = {k: max(c, key=c.get) for k, c in cities.items()}
+            zpts[r["site_zip"][:5]].append(pt)
+        if city := _place(r["site_city"]):
+            cpts[city].append(pt)
+    zip_at = {z: _center(p) for z, p in zpts.items()}
+    city_at = {c: _center(p) for c, p in cpts.items()}
+    for alias, city in MAILING_PLACE_ALIASES.items():
+        if city in city_at:
+            city_at.setdefault(alias, city_at[city])
     groups: dict[int, list[dict]] = defaultdict(list)
     for r in records:
         if r["owner_name_key"] is not None:
             groups[r["owner_name_key"]].append(r)
     small = {k for k, g in groups.items() if SMALL_PORTFOLIO[0] <= len(g) <= SMALL_PORTFOLIO[1] and len({x["asset_class"] for x in g}) == 1}
-    counts = {"out_of_state": 0, "out_of_county": 0, "small_portfolio": 0, "estate_trust": 0}
+    counts = {"out_of_state": 0, "elsewhere_in_fl": 0, "small_portfolio": 0, "estate_trust": 0}
     for r in records:
         st = r.get("owner_state") or ""
         oa = None
         if st and st != "FL":
             oa = 2
         elif st == "FL":
-            mzip, mcity = (r.get("owner_zip") or "")[:5], (r.get("owner_city") or "").upper()
-            if mzip or mcity:  # no ZIP and no city: unknown, never "another county"
-                home = zip_county.get(mzip) or city_county.get(mcity)
-                oa = 1 if home != r["county_code"] else None
+            mzip, mcity = (r.get("owner_zip") or "")[:5], _place(r.get("owner_city"))
+            if mzip or mcity:  # no ZIP and no city: unknown, never out of area
+                home = zip_at.get(mzip) or city_at.get(mcity)
+                if home is None or _miles(home, (r["lon"], r["lat"])) > OUT_OF_AREA_MILES:
+                    oa = 1
         r["out_of_area"] = oa
         r["small_portfolio"] = 1 if r["owner_name_key"] in small else None
         r["estate_trust"] = 1 if estate_trust(r.get("owner_name")) else None
         counts["out_of_state"] += oa == 2
-        counts["out_of_county"] += oa == 1
+        counts["elsewhere_in_fl"] += oa == 1
         counts["small_portfolio"] += r["small_portfolio"] is not None
         counts["estate_trust"] += r["estate_trust"] is not None
     return counts
@@ -358,14 +392,14 @@ def publish(
     manifest = build_manifest(records, names_idx, addrs_idx, source_kind=source_kind, source_label=source_label,
                               attribution=attribution, tax_roll_year=tax_roll_year, as_of_year=as_of_year,
                               shard_hex=shard_hex, tiler=tiler, nominal_value_max=nominal_value_max,
-                              sales_coverage=sales_coverage, min_sale_price=min_sale_price)
+                              sales_coverage=sales_coverage, min_sale_price=min_sale_price, prospect_counts=flags)
     _dump(out_dir / "manifest.json", manifest)
     return manifest
 
 
 def build_manifest(records, names_idx, addrs_idx, *, source_kind, source_label, attribution, tax_roll_year,
                    as_of_year, shard_hex, tiler, nominal_value_max=NOMINAL_VALUE_MAX, sales_coverage=None,
-                   min_sale_price=100) -> dict:
+                   min_sale_price=100, prospect_counts=None) -> dict:
     import shapely
 
     bounds = [round(v, 5) for v in shapely.total_bounds([r["geometry"] for r in records])]
@@ -454,6 +488,11 @@ def build_manifest(records, names_idx, addrs_idx, *, source_kind, source_label, 
             "min_sale_price": min_sale_price,
         },
         "sales_coverage": sales_coverage or {},
+        "prospecting": {
+            "out_of_area_miles": OUT_OF_AREA_MILES,
+            "small_portfolio": list(SMALL_PORTFOLIO),
+            "flags": prospect_counts or {},
+        },
         "tiles": {
             "format": tile_kind,
             "polygons": {"url": "parcels.pmtiles" if tile_kind == "pmtiles" else "parcels.geojson",

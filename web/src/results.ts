@@ -91,24 +91,24 @@ export interface OwnerResult {
   mailCount: number;
   top: IndexRow;
   /** Prospecting signals across the matching parcels. */
-  flags: { outState: boolean; outCounty: boolean; trust: boolean; small: boolean };
+  flags: { outState: boolean; elsewhereFl: boolean; trust: boolean; small: boolean };
 }
 
 /** "Out of state · Estate / trust": the owner-level signals, for the table and CSV. */
-/** Sort key for Signals: how many signals, then out of state above another Florida county. */
+/** Sort key for Signals: how many signals, then out of state above elsewhere in Florida. */
 export function signalRank(g: Pick<OwnerResult, 'flags'>): number {
   const f = g.flags;
-  return ((f.outState || f.outCounty ? 1 : 0) + (f.trust ? 1 : 0) + (f.small ? 1 : 0)) * 2 + (f.outState ? 1 : 0);
+  return ((f.outState || f.elsewhereFl ? 1 : 0) + (f.trust ? 1 : 0) + (f.small ? 1 : 0)) * 2 + (f.outState ? 1 : 0);
 }
 
 export function signalText(g: Pick<OwnerResult, 'flags'>): string {
   const f = g.flags;
-  return [f.outState ? 'Out of state' : f.outCounty ? 'Other FL county' : null, f.trust ? 'Estate / trust' : null, f.small ? 'Small portfolio' : null]
+  return [f.outState ? 'Out of state' : f.elsewhereFl ? 'Elsewhere in FL' : null, f.trust ? 'Estate / trust' : null, f.small ? 'Small portfolio' : null]
     .filter(Boolean)
     .join(' · ');
 }
 
-const outOfArea = (oa: number | null): string | null => (oa === 2 ? 'Out of state' : oa === 1 ? 'Other Florida county' : null);
+const outOfArea = (oa: number | null): string | null => (oa === 2 ? 'Out of state' : oa === 1 ? 'Elsewhere in Florida' : null);
 
 const groupLabel = (ix: ParcelIndex, ref: OwnerRef, first: IndexRow): string => {
   if (ref.kind === 'a') {
@@ -131,7 +131,7 @@ export function ownerResults(ix: ParcelIndex, rows: IndexRow[], grouping: OwnerG
       g = {
         ref, key, label: groupLabel(ix, ref, r), rows: [], total, jv: 0, sf: 0, units: 0, classes: new Map(),
         longest: null, avgHold: null, knownHolds: 0, mail: r, mailCount: 0, top: r,
-        flags: { outState: false, outCounty: false, trust: false, small: false },
+        flags: { outState: false, elsewhereFl: false, trust: false, small: false },
       };
       groups.set(key, g);
     }
@@ -142,7 +142,7 @@ export function ownerResults(ix: ParcelIndex, rows: IndexRow[], grouping: OwnerG
     g.classes.set(r.cls, (g.classes.get(r.cls) ?? 0) + 1);
     if ((r.jv ?? 0) > (g.top.jv ?? 0)) g.top = r;
     if (r.oa === 2) g.flags.outState = true;
-    if (r.oa === 1) g.flags.outCounty = true;
+    if (r.oa === 1) g.flags.elsewhereFl = true;
     if (r.et === 1) g.flags.trust = true;
     if (r.spf === 1) g.flags.small = true;
   }
@@ -229,7 +229,7 @@ export function ownersCsv(ix: ParcelIndex, groups: OwnerResult[], grouping: Owne
     g.mail.mst,
     g.mail.mzip,
     g.mailCount > 1 ? g.mailCount - 1 : null,
-    g.flags.outState ? 'Out of state' : g.flags.outCounty ? 'Other Florida county' : null,
+    g.flags.outState ? 'Out of state' : g.flags.elsewhereFl ? 'Elsewhere in Florida' : null,
     g.flags.trust ? 'Yes' : null,
     g.flags.small ? 'Yes' : null,
     g.top.addr,

@@ -71,6 +71,14 @@ export interface Manifest {
   };
   /** Per county code: how far back its sale records go (see SalesCoverage). */
   sales_coverage?: Record<string, SalesCoverage>;
+  /** Prospecting thresholds the pipeline used (absent in older bundles). */
+  prospecting?: {
+    /** Florida owners inside the three counties are "out of area" beyond this distance (miles). */
+    out_of_area_miles: number;
+    /** Owner-name group size range for "small portfolio owner". */
+    small_portfolio: [number, number];
+    flags?: Record<string, number>;
+  };
   quantiles: Record<'just_value' | 'tot_lvg_area' | 'hold_period_years' | 'land_to_value_ratio' | 'lot_acres', number[]> & {
     q: number[];
   };
@@ -116,7 +124,7 @@ export interface TileProps {
   hf?: number;
   onk?: number;
   oak?: number;
-  /** Owner mailing address: 2 out of state, 1 another Florida county. */
+  /** Owner mailing address: 2 out of state; 1 elsewhere in Florida (outside the three counties, or more than prospecting.out_of_area_miles from the parcel). */
   oa?: number;
   /** Small portfolio owner (2–10 parcels, one asset class). */
   spf?: number;

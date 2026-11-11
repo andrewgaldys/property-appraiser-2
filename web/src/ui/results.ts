@@ -21,6 +21,7 @@ import {
 } from '../results';
 import { loadUi, saveUi, type Store } from '../state';
 import type { AppState, Bbox, Manifest, OwnerRef } from '../types';
+import { prospectingRules } from './facts';
 import { VirtualTable, type Column } from './table';
 
 export interface ResultsHandlers {
@@ -303,6 +304,7 @@ export class ResultsPanel {
 
   private ownerColumns(): Column<OwnerResult>[] {
     const sw = (cls: string) => h('i', { class: 'rs-sw', style: { background: CLASS_COLORS[cls] ?? CLASS_FALLBACK } });
+    const rules = prospectingRules(this.manifest);
     return [
       {
         id: 'owner', label: 'Owner', width: 230, sort: (a, b) => cmpStr(a.label, b.label),
@@ -340,7 +342,7 @@ export class ResultsPanel {
         id: 'signals', label: 'Signals', width: 170,
         sort: (a, b) => signalRank(a) - signalRank(b),
         desc: true,
-        info: 'Prospecting signals on the matching parcels: owner mails from out of state or another Florida county, owner name reads as a trust or estate, small portfolio owner (2–10 parcels in one class).',
+        info: `Prospecting signals on the matching parcels: the owner mails from out of state or elsewhere in Florida (outside the three counties, or more than ${rules.miles} miles away), the owner name reads as a trust or estate, or the owner is a small portfolio owner (${rules.small[0]}–${rules.small[1]} parcels in one asset class).`,
         cell: (g) => h('span', { class: 'rs-clip rs-signals' }, signalText(g) || '—'),
         title: (g) => signalText(g) || undefined,
       },

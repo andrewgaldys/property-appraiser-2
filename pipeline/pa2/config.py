@@ -155,6 +155,15 @@ OWNER_ITEM_FIELDS: list[str] = [
 # all in one asset class, is a "small portfolio owner".
 SMALL_PORTFOLIO = (2, 10)
 
+# An owner with a Florida mailing address inside the three counties is "out of area" when the
+# mailing ZIP (else city) is more than this many miles from the parcel. Override with
+# PA2_OUT_OF_AREA_MILES. Florida addresses outside the three counties always count.
+OUT_OF_AREA_MILES = float(os.environ.get("PA2_OUT_OF_AREA_MILES", "25"))
+
+# Postal place names inside the three counties that no parcel in this dataset uses as its site
+# city (PO-box towns), mapped to the site city around them, so their owners can be placed.
+MAILING_PLACE_ALIASES = {"PORT SALERNO": "STUART", "LAKE HARBOR": "SOUTH BAY"}
+
 # A portfolio list stores at most this many cards; the total count is always exact.
 PORTFOLIO_MAX_ITEMS = 500
 # A mailing address shared by this many distinct owner names is flagged as a likely

@@ -3,7 +3,7 @@ import { clear, h, icon, toast } from '../dom';
 import { describeScreen, type SavedScreen, type ScreenRepository, type ScreenState } from '../screens';
 import { loadUi, saveUi, type Store } from '../state';
 import type { AppState, Manifest, PresetId } from '../types';
-import { coverageLine } from './facts';
+import { coverageLine, prospectingRules } from './facts';
 import { infoTip } from './infotip';
 
 export interface ProspectingHandlers {
@@ -22,9 +22,9 @@ function presetInfo(id: PresetId, m: Manifest): string {
     case 'underbuilt':
       return `Buildings worth at most ${Math.round(UNDERBUILT.maxBtl * 100)}% of the land (building-to-land value ${UNDERBUILT.maxBtl}× or less) on a lot of ${UNDERBUILT.minLotAc} acre or more. Vacant land counts; nominal-value parcels don't. Add an asset class to narrow it.`;
     case 'outside':
-      return 'The tax bill goes out of state, or to another Florida county. Florida mailing addresses are placed in a county using this dataset’s own parcels’ ZIP codes and cities, so a ZIP that crosses a county line can be misplaced.';
+      return `The tax bill goes out of state, or elsewhere in Florida: outside Martin, St. Lucie and Palm Beach, or inside them but more than ${prospectingRules(m).miles} miles from the parcel.\n\nThe distance runs from the middle of the owner’s mailing ZIP code (placed using this dataset’s own parcels) to the parcel, so it is approximate. Owners just past the outer county lines (Deerfield Beach, Vero Beach, Okeechobee) count however close they are.`;
     case 'small':
-      return 'The owner name holds 2 to 10 parcels across the three counties, all in one asset class (grouped by owner name, not mailing address).';
+      return `The owner name holds ${prospectingRules(m).small[0]} to ${prospectingRules(m).small[1]} parcels across the three counties, all in one asset class (grouped by owner name, not mailing address).`;
     case 'trust':
       return 'The owner name reads as a trust or an estate: TRUST, TRUSTEE, TR, ESTATE OF and the like. Land trusts count; REITs, banks and real-estate companies do not.';
   }
