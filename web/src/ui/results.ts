@@ -42,7 +42,8 @@ type Scope = 'all' | 'view';
 
 const cmpNum = (a: number | null | undefined, b: number | null | undefined) => (a ?? -Infinity) - (b ?? -Infinity);
 const cmpStr = (a: string, b: string) => a.localeCompare(b);
-const BAR = 54;
+/** Closed, the list takes no room from the map: it is a floating pill (see app.css). */
+const BAR = 0;
 
 /**
  * Owners & parcels: the screen's results as tables under the map. They cover every parcel that
@@ -137,7 +138,9 @@ export class ResultsPanel {
     );
     this.syncChrome();
 
+    this.syncIdle();
     store.subscribe((s, prev) => {
+      if (s.filters !== prev.filters || s.search !== prev.search) this.syncIdle();
       if (s.filters !== prev.filters || s.search !== prev.search || s.ownerGroup !== prev.ownerGroup) this.schedule();
       if (s.selection !== prev.selection || s.ownerFocus !== prev.ownerFocus || s.ownerGroup !== prev.ownerGroup) this.syncActive(true);
     });
@@ -166,10 +169,15 @@ export class ResultsPanel {
     this.handlers.onStateChange();
   }
 
-  /** Open on a tab (the sidebar's "See matching owners"). */
+  /** Open on a tab ("See matching owners"). */
   show(tab: Tab = 'owners'): void {
     this.setTab(tab, false);
     this.setOpen(true);
+  }
+
+  /** Open or close the list (the rail's Owners button). */
+  toggle(): void {
+    this.setOpen(!this.open);
   }
 
   private setOpen(open: boolean): void {
@@ -226,7 +234,7 @@ export class ResultsPanel {
     }
     this.ownersTable.el.hidden = this.tab !== 'owners';
     this.parcelsTable.el.hidden = this.tab !== 'parcels';
-    this.toggleLabel.textContent = this.open ? 'Close' : 'Open list';
+    this.toggleLabel.textContent = this.open ? 'Close' : 'View list';
     this.toggleBtn.classList.toggle('solid', !this.open);
     this.toggleBtn.classList.toggle('ghost', this.open);
     this.toggleBtn.setAttribute('aria-label', this.open ? 'Close the owners and parcels list' : 'Open the owners and parcels list');
@@ -272,6 +280,14 @@ export class ResultsPanel {
     }
     window.clearTimeout(this.timer);
     this.timer = window.setTimeout(() => this.compute(), 120);
+  }
+
+  /** Nothing is filtered or searched: closed, the pill stays out of the way. */
+  private syncIdle(): void {
+    const s = this.store.get();
+    const f = s.filters;
+    const narrowed = f.counties.length > 0 || f.classes.length > 0 || f.presets.length > 0 || f.minHold > 0 || f.lotStep > 0 || f.btlStep > 0 || !!s.search;
+    this.el.classList.toggle('idle', !narrowed);
   }
 
   private compute(): void {

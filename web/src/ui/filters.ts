@@ -28,15 +28,23 @@ export interface FilterPanelHandlers {
   onHelp(section?: 'coverage'): void;
 }
 
-export type SectionId = 'where' | 'classes' | 'screens' | 'display';
+export type SectionId = 'where' | 'classes' | 'screens';
 const SECTION_DEFAULTS: Record<SectionId, boolean> = {
   where: true,
   classes: true,
   screens: false,
-  display: false,
 };
-/** Other panels mount into the sidebar's flow here (owner signals, top owners, saved screens). */
-export type SlotId = 'signals' | 'insights' | 'saved';
+/** Other components mount here: the owner signals (step 3 of Filters) and Top owners (Insights). */
+export type SlotId = 'signals' | 'insights';
+/** The pop-up panels this component fills (see ui/rail.ts). */
+export interface FilterMounts {
+  /** Filters: location, asset class, owner signals, more filters, and the way to the owners list. */
+  filters: HTMLElement;
+  /** Insights: live totals for the map view (Top owners mounts under them). */
+  insights: HTMLElement;
+  /** Map: what height and color show. */
+  map: HTMLElement;
+}
 const MARKETS_SHOWN = 8;
 
 type SegButton<T> = { value: T; el: HTMLButtonElement };
@@ -96,7 +104,6 @@ export class FilterPanel {
   private slots: Record<SlotId, HTMLElement> = {
     signals: h('div', { class: 'slot' }),
     insights: h('div', { class: 'slot' }),
-    saved: h('div', { class: 'slot' }),
   };
   private extrudeSeg!: { el: HTMLElement; buttons: SegButton<string>[] };
   private shadeSeg!: { el: HTMLElement; buttons: SegButton<string>[] };
@@ -114,7 +121,7 @@ export class FilterPanel {
   private ctaCount!: HTMLElement;
 
   constructor(
-    private root: HTMLElement,
+    private mounts: FilterMounts,
     private manifest: Manifest,
     private store: Store<AppState>,
     private handlers: FilterPanelHandlers,
@@ -127,22 +134,13 @@ export class FilterPanel {
     });
   }
 
-  /** Where another panel mounts in the sidebar's flow. */
+  /** Where another component mounts. */
   slot(id: SlotId): HTMLElement {
     return this.slots[id];
   }
 
   private setFilters(patch: Partial<Filters>): void {
     this.store.set({ filters: { ...this.store.get().filters, ...patch } });
-  }
-
-  /** Open (and scroll to) a sidebar section. */
-  openSection(id: SectionId): void {
-    const s = this.sections.get(id);
-    if (!s) return;
-    s.el.open = true;
-    s.el.scrollIntoView({ block: 'start', behavior: 'smooth' });
-    s.el.querySelector('summary')?.focus({ preventScroll: true });
   }
 
   private section(id: SectionId, title: string, step: number | null, ...body: Child[]): HTMLDetailsElement {
@@ -313,24 +311,10 @@ export class FilterPanel {
     const coverage = coverageLine(m);
     const max = nominalMax(m);
 
+    // ---- Filters panel: where, what, who, then the way to the list --------------------------------
     appendAll(
-      this.root,
-      sample
-        ? h('div', { class: 'source-flag' }, h('strong', null, 'Sample data.'), ' Synthetic parcels for demonstration only.')
-        : null,
-      h(
-        'section',
-        { class: 'inview', 'aria-label': 'Totals for the parcels in view' },
-        h('div', { class: 'inview-head' }, h('h2', null, h('i', { class: 'live-dot', 'aria-hidden': 'true' }), 'On the map now'), h('span', { class: 'inview-sub' }, 'after filters')),
-        h('div', { class: 'kpis' }, kp.tile, kj.tile, ku.tile, ks.tile),
-        this.inviewNote,
-      ),
-      h(
-        'div',
-        { class: 'flow-head' },
-        h('h2', null, 'Build a list'),
-        h('p', null, 'Pick where, what and who. The map and the owners list follow.'),
-      ),
+      this.mounts.filters,
+      sample ? h('div', { class: 'source-flag' }, h('strong', null, 'Sample data.'), ' Synthetic parcels for demonstration only.') : null,
       this.section(
         'where',
         'Location',
@@ -382,22 +366,26 @@ export class FilterPanel {
         this.ctaCount,
         this.resetBtn,
       ),
-      this.slots.insights,
-      this.slots.saved,
-      this.section(
-        'display',
-        'Map style',
-        null,
-        h('div', { class: 'field' }, h('div', { class: 'field-label' }, '3D height shows'), this.extrudeSeg.el),
-        h('div', { class: 'field' }, h('div', { class: 'field-label' }, 'Color shows'), this.shadeSeg.el),
+    );
+
+    // ---- Insights panel: live totals for the map view (Top owners mounts below) -------------------
+    appendAll(
+      this.mounts.insights,
+      h(
+        'section',
+        { class: 'inview', 'aria-label': 'Totals for the parcels in view' },
+        h('div', { class: 'inview-head' }, h('h3', null, h('i', { class: 'live-dot', 'aria-hidden': 'true' }), 'In the map view'), h('span', { class: 'inview-sub' }, 'after filters')),
+        h('div', { class: 'kpis' }, kp.tile, kj.tile, ku.tile, ks.tile),
+        this.inviewNote,
       ),
+      this.slots.insights,
       h(
         'footer',
         { class: 'panel-foot' },
         h(
           'p',
           { class: 'cap' },
-          `${int(m.stats.parcels)} parcels · ${money(m.stats.just_value)} assessed · ${compact(m.stats.owner_addr_groups + m.stats.owner_name_groups)} owner groups`,
+          `All data: ${int(m.stats.parcels)} parcels · ${money(m.stats.just_value)} assessed · ${compact(m.stats.owner_addr_groups + m.stats.owner_name_groups)} owner groups`,
         ),
         h(
           'p',
@@ -406,6 +394,17 @@ export class FilterPanel {
           `updated ${shortDate(m.generated_at)} · `,
           h('button', { type: 'button', class: 'linklike', onclick: () => this.handlers.onHelp('coverage') }, 'Data and coverage'),
         ),
+      ),
+    );
+
+    // ---- Map panel: what the blocks show (the basemap switch and the legend sit around this) ------
+    appendAll(
+      this.mounts.map,
+      h(
+        'div',
+        { class: 'map-style' },
+        h('div', { class: 'field' }, h('div', { class: 'field-label' }, 'Height shows'), this.extrudeSeg.el),
+        h('div', { class: 'field' }, h('div', { class: 'field-label' }, 'Color shows'), this.shadeSeg.el),
       ),
     );
   }
@@ -458,10 +457,6 @@ export class FilterPanel {
     sum('classes', f.classes.length ? `${f.classes.length} of ${this.chips.length}` : 'All', f.classes.length > 0);
     const n = activeScreens(f) + (f.includeNominal ? 1 : 0);
     sum('screens', n ? `${n} on` : 'None', n > 0);
-    const ext = EXTRUDE_MODES.find((x) => x.id === s.extrude)?.label ?? '';
-    const shade = SHADE_MODES.find((x) => x.id === s.shade)?.label ?? '';
-    sum('display', `${ext} · ${shade}`);
-
     const dirty = f.counties.length > 0 || f.classes.length > 0 || n > 0 || f.presets.length > 0 || !!s.search;
     this.resetBtn.hidden = !dirty;
   }

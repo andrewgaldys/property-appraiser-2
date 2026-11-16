@@ -94,9 +94,9 @@ export class HelpDialog {
           h(
             'ol',
             { class: 'help-steps' },
-            step(1, 'Pick where and what', 'Choose counties and asset classes in the sidebar. The map and the totals update as you go.'),
+            step(1, 'Pick where and what', 'Open Filters and choose counties and asset classes. The map updates as you go.'),
             step(2, 'Turn on owner signals', 'Long-term holders, out-of-area owners, estates and trusts, small portfolios, underbuilt sites. Mix them: a parcel has to match them all.'),
-            step(3, 'Work the owners list', 'Open “See matching owners”, sort it, open an owner to see everything they hold, look them up on Sunbiz, and export a call or mail list.'),
+            step(3, 'Work the owners list', 'Open the Owners list, sort it, open an owner to see everything they hold, look them up on Sunbiz, and export a call or mail list.'),
           ),
         ),
         h(
@@ -106,7 +106,7 @@ export class HelpDialog {
           h(
             'ul',
             { class: 'help-notes' },
-            h('li', null, 'Each block is one parcel. ', h('b', null, 'Height'), ' is its assessed market value and ', h('b', null, 'color'), ' is its asset class. Change either under Map style.'),
+            h('li', null, 'Each block is one parcel. ', h('b', null, 'Height'), ' is its assessed market value and ', h('b', null, 'color'), ' is its asset class. Change either, the basemap, or see the legend under Map.'),
             h('li', null, h('b', null, 'Click a parcel'), ' for its record: value, size, last sale, years held, the owner and everything else they own.'),
             h('li', null, 'Scroll to zoom. Drag with the right mouse button, or with two fingers, to tilt and turn.'),
             h('li', null, 'Shortcuts: ', h('kbd', null, '/'), ' search, ', h('kbd', null, 'S'), ' satellite lens, ', h('kbd', null, '?'), ' this guide, ', h('kbd', null, 'Esc'), ' close a panel.'),

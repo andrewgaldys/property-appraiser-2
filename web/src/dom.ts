@@ -65,6 +65,7 @@ const ICONS: Record<string, string> = {
   user: 'M8 8a2.6 2.6 0 100-5.2A2.6 2.6 0 008 8zM3 13.5c.5-2.3 2.5-3.6 5-3.6s4.5 1.3 5 3.6',
   layers: 'M8 2.5l5.5 3L8 8.5l-5.5-3zM2.5 8.2L8 11.2l5.5-3M2.5 10.8L8 13.8l5.5-3',
   spark: 'M8 2v3M8 11v3M2 8h3M11 8h3M4 4l2 2M10 10l2 2M12 4l-2 2M6 10l-2 2',
+  chart: 'M3 13.5V9M8 13.5V2.5M13 13.5V6',
 };
 
 export function icon(name: keyof typeof ICONS | string, size = 14): SVGSVGElement {

@@ -84,6 +84,8 @@ export class MapController {
   ) {
     this.agentKeys = new Set(manifest.owners.agent_addr_keys ?? []);
     const customStyle = import.meta.env.VITE_BASEMAP_STYLE?.trim();
+    // No map position in the link (checked now: MapLibre writes one as soon as the map exists).
+    const fresh = !/(^|[#&])map=/.test(window.location.hash);
     this.map = new MapLibreMap({
       container,
       style: customStyle || buildBasemapStyle(),
@@ -98,6 +100,13 @@ export class MapController {
       attributionControl: false,
       canvasContextAttributes: { antialias: true },
     });
+    // A fresh visit: the coverage is a thin strip of coast inside a wide bounding box, so center on
+    // where the parcels are (the markets, weighted by size) rather than on the box.
+    if (fresh && manifest.cities.length) {
+      const total = manifest.cities.reduce((a, c) => a + c.count, 0);
+      const lon = manifest.cities.reduce((a, c) => a + ((c.bbox[0] + c.bbox[2]) / 2) * c.count, 0) / total;
+      this.map.jumpTo({ center: [lon, (manifest.bounds[1] + manifest.bounds[3]) / 2] });
+    }
     this.map.addControl(new NavigationControl({ visualizePitch: true }), 'top-right');
     this.map.addControl(new ScaleControl({ unit: 'imperial', maxWidth: 100 }), 'bottom-right');
     // Imagery appears in the lens, split view and drawer card too, so it is always credited.
@@ -383,6 +392,23 @@ export class MapController {
     this.rightInset = px;
   }
 
+  private leftInset = 0;
+
+  /**
+   * Reserve `px` on the left for an open pop-up panel (same idea as setRightInset): fits and
+   * fly-tos then land in the part of the map that is not covered.
+   */
+  setLeftInset(px: number): void {
+    if (px === this.leftInset) return;
+    const cv = this.map.getCanvas();
+    const { top = 0, bottom = 0, right = 0 } = this.map.getPadding();
+    const x = px + (cv.clientWidth - px - right) / 2;
+    const y = top + (cv.clientHeight - top - bottom) / 2;
+    const center = this.map.unproject([x, y]);
+    this.map.jumpTo({ center, padding: { top, bottom, left: px, right } });
+    this.leftInset = px;
+  }
+
   private bottomInset = 0;
 
   /**
@@ -475,7 +501,7 @@ export class MapController {
     this.map.triggerRepaint();
     await this.waitIdle(4000);
     const image = await this.snapshot();
-    this.map.jumpTo({ center: [rec.lon, rec.lat], padding: { top: 0, bottom: 0, left: 0, right: inset } });
+    this.map.jumpTo({ center: [rec.lon, rec.lat], padding: { top: 0, bottom: this.bottomInset, left: this.leftInset, right: inset } });
     return image;
   }
 

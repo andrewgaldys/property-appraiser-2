@@ -8,7 +8,7 @@ import './styles/brief.css';
 
 import { DEFAULT_FILTERS, STARTER_SCREENS } from './config';
 import { DataStore } from './data';
-import { h, icon, toast } from './dom';
+import { h, toast } from './dom';
 import { MapController } from './map/controller';
 import { Store, loadSavedView, saveView } from './state';
 import type { AppState, Bbox, Manifest, OwnerRef, ParcelRecord, Portfolio, PortfolioItem, TileProps } from './types';
@@ -23,13 +23,13 @@ import { Legend } from './ui/legend';
 import { OwnerProfile } from './ui/ownerProfile';
 import { OwnersPanel } from './ui/owners';
 import { ProspectingPanel } from './ui/prospecting';
+import { Rail } from './ui/rail';
 import { ResultsPanel } from './ui/results';
 import { SearchBox } from './ui/search';
 import { ownerRefOf } from './results';
 import { LocalScreenRepository, SCREEN_KEYS, paramsScreen, screenParams, type ScreenState } from './screens';
 import { MAX_SET, resolveSearch } from './search';
 import { Toolbar } from './ui/toolbar';
-import { buildTopbar } from './ui/topbar';
 import { Tooltip } from './ui/tooltip';
 
 // ---- URL hash: MapLibre owns `map=`, we own `p=` (selected parcel) ----------------
@@ -195,7 +195,24 @@ async function boot(): Promise<void> {
   );
 
   const help = new HelpDialog(manifest);
-  const panel = new FilterPanel(document.getElementById('filters')!, manifest, store, {
+  const onPhone = () => window.matchMedia('(max-width: 720px)').matches;
+
+  // The page is the map. A slim rail opens everything else as one pop-up panel at a time.
+  const rail = new Rail(document.getElementById('rail')!, mapEl, {
+    onList: () => results.toggle(),
+    onHelp: () => help.open(),
+    onPanel: (id) => {
+      if (id) results.preload(); // totals and match counts read the parcel table
+      mapc.setLeftInset(rail.inset());
+    },
+  });
+  /** On a phone a panel covers the map, so an action that changes the map closes it. */
+  const closePanelOnPhone = () => {
+    if (onPhone()) rail.open(null);
+  };
+  window.addEventListener('resize', () => mapc.setLeftInset(rail.inset()));
+
+  const panel = new FilterPanel({ filters: rail.body('filters'), insights: rail.body('insights'), map: rail.body('map') }, manifest, store, {
     onCounties: (codes) => {
       const boxes = codes.map((code) => manifest.counties.find((x) => x.code === code)?.bbox).filter((b): b is Bbox => !!b);
       if (!boxes.length) return;
@@ -209,24 +226,31 @@ async function boot(): Promise<void> {
     },
     onHelp: (section) => help.open(section),
     onMarket: (b: Bbox) => {
-      if (window.matchMedia('(max-width: 900px)').matches) setPanelOpen(false);
+      closePanelOnPhone();
       mapc.fitBbox(b, { maxZoom: 15.3, pitch: store.get().extrude === 'flat' ? 0 : 55 });
     },
     onShowResults: () => {
-      if (window.matchMedia('(max-width: 900px)').matches) setPanelOpen(false);
+      closePanelOnPhone();
       results.show('owners');
     },
   });
-  // Top owners in view: an insight panel under the list-building steps.
+  const filterCount = (f: AppState['filters']): number =>
+    (f.counties.length ? 1 : 0) + (f.classes.length ? 1 : 0) + f.presets.length + (f.minHold > 0 ? 1 : 0) + (f.lotStep > 0 ? 1 : 0) + (f.btlStep > 0 ? 1 : 0);
+  rail.setFilterCount(filterCount(store.get().filters));
+  store.subscribe((s, prev) => {
+    if (s.filters !== prev.filters) rail.setFilterCount(filterCount(s.filters));
+  });
+
+  // Insights: Top owners under the live totals.
   const owners = new OwnersPanel(manifest, data, store, {
     onPick: (row) => {
-      if (window.matchMedia('(max-width: 900px)').matches) setPanelOpen(false);
+      closePanelOnPhone();
       void openOwner({ kind: row.kind, id: row.id }, { fit: false });
     },
   });
   panel.slot('insights').append(owners.el);
 
-  // Owner signals are step 3 of the sidebar; saved and starter screens get their own section.
+  // Owner signals are step 3 of Filters; saved and starter screens have a panel of their own.
   const prospecting = new ProspectingPanel(manifest, store, new LocalScreenRepository(), {
     capture: () => captureScreen(true),
     apply: (state) => applyScreen(state, true),
@@ -234,26 +258,30 @@ async function boot(): Promise<void> {
     starter: (id) => applyStarter(id),
   });
   panel.slot('signals').append(prospecting.el);
-  panel.slot('saved').append(prospecting.savedEl);
-  const legend = new Legend(mapEl, manifest, store);
+  rail.body('saved').append(prospecting.savedEl);
+  prospecting.savedEl.open = true; // the panel is its header: the section inside never collapses
+
+  // Map panel: the basemap switch, what height and color show (FilterPanel), then the legend.
+  rail.body('map').prepend(h('div', { class: 'map-style' }, h('div', { class: 'field-label' }, 'Basemap'), new Toolbar(store).el));
+  rail.body('map').append(new Legend(manifest, store).el);
 
   // Owners & parcels tables under the map: every matching parcel, grouped into owners.
-  const RESULTS_BAR = 54;
   /** True while a link or saved screen sets the table: the map keeps its (linked) center. */
   let restoring = false;
   const results = new ResultsPanel(manifest, data, store, {
     onOpenOwner: (ref) => void openOwner(ref),
     onSelectParcel: (pid) => void select(pid, { fly: true }),
     onLayout: (px) => {
-      legend.setTableOpen(px > RESULTS_BAR);
-      // On phones the open table covers the map, so the map's own controls stay put under it.
-      const phone = window.matchMedia('(max-width: 720px)').matches;
-      const h = phone ? RESULTS_BAR : Math.round(px);
-      mapEl.style.setProperty('--results-h', `${h}px`);
-      mapc.setBottomInset(h, restoring);
+      // On phones the open list covers the map, so the map's own controls stay put under it.
+      const height = onPhone() ? 0 : Math.round(px);
+      mapEl.style.setProperty('--results-h', `${height}px`);
+      mapc.setBottomInset(height, restoring);
     },
     viewBbox: () => mapc.viewBbox(),
-    onStateChange: () => writeScreenHash(),
+    onStateChange: () => {
+      rail.setListOpen(results.isOpen);
+      writeScreenHash();
+    },
     onCounts: (n) => {
       panel.setMatches(n);
       emptyNote.hidden = !n || n.parcels > 0;
@@ -264,28 +292,15 @@ async function boot(): Promise<void> {
     'div',
     { class: 'empty-note', role: 'status', hidden: true },
     h('b', null, 'No parcels match these filters.'),
-    h('span', null, 'Remove a filter above, or start over.'),
+    h('span', null, 'Remove a filter, or start over.'),
     h('button', { type: 'button', class: 'btn solid sm', onclick: () => store.set({ filters: { ...DEFAULT_FILTERS }, search: null }) }, 'Reset all filters'),
   );
   mapEl.append(emptyNote);
   mapEl.append(results.el);
-  mapEl.style.setProperty('--results-h', `${RESULTS_BAR}px`);
+  mapEl.style.setProperty('--results-h', '0px');
   mapc.map.on('moveend', () => results.mapMoved());
   window.addEventListener('resize', () => results.relayout());
 
-  // Top bar: [Filters (narrow screens)] brand, search, data readout, actions.
-  const panelToggle = h(
-    'button',
-    {
-      type: 'button',
-      class: 'panel-toggle',
-      'aria-controls': 'filters',
-      'aria-expanded': 'false',
-      onclick: () => setPanelOpen(!document.body.classList.contains('panel-open')),
-    },
-    icon('filters'),
-    'Filters',
-  );
   // Search: owners, addresses, parcel IDs, property types, mailing addresses ("/" from anywhere).
   const searchBox = new SearchBox(manifest, data, store, {
     onShowSet: (set) => {
@@ -298,20 +313,8 @@ async function boot(): Promise<void> {
       void select(pid, { fly: true });
     },
   });
-  buildTopbar(document.getElementById('topbar')!, manifest, {
-    panelToggle,
-    search: searchBox.el,
-    onHelp: () => help.open(),
-    onCopyLink: () => copyLink('Link to this screen copied'),
-  });
-  // Map overlay, top-left: basemap + lens, then the applied-filter chips.
-  mapEl.append(h('div', { class: 'map-top' }, h('div', { class: 'map-top-row' }, new Toolbar(store).el), new ActiveFilters(store).el));
-
-  function setPanelOpen(open: boolean): void {
-    document.body.classList.toggle('panel-open', open);
-    panelToggle.setAttribute('aria-expanded', String(open));
-    if (open) results.preload(); // the sidebar's totals and match count read the parcel table
-  }
+  // Over the map, top-left: search, then the applied-filter chips beside it.
+  mapEl.append(h('div', { class: 'map-top' }, searchBox.el, new ActiveFilters(store).el));
 
   /** A starter screen: keeps the counties already picked, sets the rest, and opens the owners list. */
   function applyStarter(id: string): void {
@@ -319,13 +322,13 @@ async function boot(): Promise<void> {
     if (!sc) return;
     store.set({ filters: { ...DEFAULT_FILTERS, counties: store.get().filters.counties, ...sc.filters }, search: null });
     searchBox.setText('');
-    if (window.matchMedia('(max-width: 900px)').matches) setPanelOpen(false);
+    rail.open(null);
     results.show('owners');
   }
   const firstHint = new FirstVisitHint(
     mapEl,
     manifest,
-    { onStarter: (id) => applyStarter(id), onHelp: () => help.open() },
+    { onStarters: () => rail.open('saved'), onHelp: () => help.open() },
     !linked && !hashParam('p') && !hashParam('o'),
   );
   // The hint has done its job once someone filters.
@@ -570,9 +573,9 @@ async function boot(): Promise<void> {
       return;
     }
     if (e.key !== 'Escape' || brief.isOpen || help.isOpen) return;
-    if (document.body.classList.contains('panel-open')) setPanelOpen(false);
-    else if (drawer.isOpen) clearSelection();
+    if (drawer.isOpen) clearSelection();
     else if (profile.isOpen) closeOwner();
+    else if (rail.current) rail.open(null);
   });
 }
 

@@ -1,8 +1,8 @@
 import { CLASS_COLORS, CLASS_FALLBACK, CLASS_SHORT, EXTRUDE_MODES, RAMP_NORMAL, SHADE_MODES } from '../config';
-import { appendAll, clear, h, icon } from '../dom';
+import { appendAll, clear, h } from '../dom';
 import { compact, int, money, pct } from '../format';
 import { shadeStops, type MetricMode } from '../map/layers';
-import { loadUi, saveUi, type Store } from '../state';
+import type { Store } from '../state';
 import type { AppState, Manifest } from '../types';
 
 function tick(mode: MetricMode, v: number): string {
@@ -13,87 +13,23 @@ function tick(mode: MetricMode, v: number): string {
 }
 
 /**
- * Bottom-left legend: asset-class swatches (or the metric ramp) and what height encodes. It
- * collapses to a small "Legend" button so it never sits on parcels; the choice is remembered.
- * Starts collapsed on small screens, and steps aside on its own while the property panel is open
- * on a screen too narrow for both (reopening when the panel closes).
+ * The legend: asset-class swatches (or the metric ramp) and what height encodes. It lives in the
+ * Map panel, so it is only on screen when someone asks for it.
  */
 export class Legend {
-  private el: HTMLElement;
+  readonly el: HTMLElement;
   private body: HTMLElement;
-  private toggle: HTMLButtonElement;
-  /** The viewer's choice (remembered). */
-  private pref: boolean;
-  /** Collapsed for now because a panel needs the room. */
-  private auto = false;
-  private panelOpen = false;
-  private tableOpen = false;
 
   constructor(
-    container: HTMLElement,
     private manifest: Manifest,
     store: Store<AppState>,
   ) {
-    const small = window.matchMedia('(max-width: 720px)').matches;
-    this.pref = loadUi({ legendCollapsed: small }).legendCollapsed;
-    this.body = h('div', { class: 'lg-body', id: 'legend-body' });
-    this.toggle = h(
-      'button',
-      {
-        type: 'button',
-        class: 'lg-toggle',
-        'aria-controls': 'legend-body',
-        onclick: () => {
-          const next = !this.collapsed;
-          this.auto = false;
-          this.pref = next;
-          saveUi({ legendCollapsed: next });
-          this.apply();
-        },
-      },
-      icon('legend', 14),
-      h('span', { class: 'lg-toggle-label' }, 'Legend'),
-      icon('chevron', 14),
-    );
-    this.el = h('section', { class: 'legend', 'aria-label': 'Map legend' }, this.toggle, this.body);
-    container.append(this.el);
-    this.apply();
+    this.body = h('div', { class: 'lg-body' });
+    this.el = h('section', { class: 'legend', 'aria-label': 'Map legend' }, h('h3', { class: 'lg-head' }, 'Legend'), this.body);
     this.render(store.get());
-    window.addEventListener('resize', () => this.makeRoom(this.panelOpen));
     store.subscribe((s, prev) => {
-      if (!!s.selection !== !!prev.selection || !!s.ownerFocus !== !!prev.ownerFocus) this.makeRoom(!!s.selection || !!s.ownerFocus);
       if (s.shade !== prev.shade || s.extrude !== prev.extrude || s.selection !== prev.selection) this.render(s);
     });
-  }
-
-  private get collapsed(): boolean {
-    return this.auto || this.pref;
-  }
-
-  /** The results table is open: the map is short, so the legend steps aside. */
-  setTableOpen(open: boolean): void {
-    this.tableOpen = open;
-    this.makeRoom(this.panelOpen);
-  }
-
-  private makeRoom(panelOpen: boolean): void {
-    this.panelOpen = panelOpen;
-    const cramped = (panelOpen && window.innerWidth < 1280) || this.tableOpen;
-    if (cramped && !this.collapsed) {
-      this.auto = true;
-      this.apply();
-    } else if (!cramped && this.auto) {
-      this.auto = false;
-      this.apply();
-    }
-  }
-
-  private apply(): void {
-    const c = this.collapsed;
-    this.el.classList.toggle('collapsed', c);
-    this.body.hidden = c;
-    this.toggle.setAttribute('aria-expanded', String(!c));
-    this.toggle.title = c ? 'Show legend' : 'Hide legend';
   }
 
   private classRows(): HTMLElement {
