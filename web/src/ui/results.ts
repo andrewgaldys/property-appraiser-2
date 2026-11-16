@@ -42,7 +42,7 @@ type Scope = 'all' | 'view';
 
 const cmpNum = (a: number | null | undefined, b: number | null | undefined) => (a ?? -Infinity) - (b ?? -Infinity);
 const cmpStr = (a: string, b: string) => a.localeCompare(b);
-const BAR = 46;
+const BAR = 54;
 
 /**
  * Owners & parcels: the screen's results as tables under the map. They cover every parcel that
@@ -65,6 +65,7 @@ export class ResultsPanel {
   private scopeButtons: Record<Scope, HTMLButtonElement>;
   private summary: HTMLElement;
   private toggleBtn: HTMLButtonElement;
+  private toggleLabel: HTMLElement;
   private exportBtn: HTMLButtonElement;
   private bodyEl: HTMLElement;
   private timer = 0;
@@ -115,7 +116,9 @@ export class ResultsPanel {
       icon('download', 14),
       h('span', { class: 'rs-btn-label' }, 'Export CSV'),
     );
-    this.toggleBtn = h('button', { type: 'button', class: 'icon-btn rs-toggle', onclick: () => this.setOpen(!this.open) }, icon('chevron', 16));
+    // The list is the product of a screen, so opening it is the bar's one solid button.
+    this.toggleLabel = h('span', { class: 'rs-toggle-label' });
+    this.toggleBtn = h('button', { type: 'button', class: 'btn sm rs-toggle', onclick: () => this.setOpen(!this.open) }, this.toggleLabel, icon('chevron', 15));
     this.bodyEl = h('div', { class: 'rs-body' }, this.ownersTable.el, this.parcelsTable.el);
 
     this.el = h(
@@ -223,7 +226,10 @@ export class ResultsPanel {
     }
     this.ownersTable.el.hidden = this.tab !== 'owners';
     this.parcelsTable.el.hidden = this.tab !== 'parcels';
-    this.toggleBtn.setAttribute('aria-label', this.open ? 'Collapse the results table' : 'Open the results table');
+    this.toggleLabel.textContent = this.open ? 'Close' : 'Open list';
+    this.toggleBtn.classList.toggle('solid', !this.open);
+    this.toggleBtn.classList.toggle('ghost', this.open);
+    this.toggleBtn.setAttribute('aria-label', this.open ? 'Close the owners and parcels list' : 'Open the owners and parcels list');
     this.toggleBtn.setAttribute('aria-expanded', String(this.open));
     this.exportBtn.disabled = !this.ix;
     this.exportBtn.title = this.tab === 'owners' ? 'Download the owners table as CSV (current sort)' : 'Download the parcels table as CSV (current sort)';

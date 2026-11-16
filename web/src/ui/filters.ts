@@ -1,5 +1,4 @@
 import {
-  APP_NAME,
   BTL_STEPS,
   CLASS_COLORS,
   CLASS_FALLBACK,
@@ -16,7 +15,7 @@ import { compact, int, money, shortDate } from '../format';
 import { nominalMax } from '../map/layers';
 import { loadUi, saveUi, type Store } from '../state';
 import type { AppState, Bbox, Filters, Manifest, ViewStats } from '../types';
-import { INFO, area, countyCodes, coverageDetail, coverageExample, coverageLine } from './facts';
+import { INFO, countyCodes, coverageDetail, coverageExample, coverageLine } from './facts';
 import { infoTip } from './infotip';
 
 export interface FilterPanelHandlers {
@@ -198,7 +197,6 @@ export class FilterPanel {
     const m = this.manifest;
     const sample = m.source.kind === 'sample';
     const nominalCount = m.data_quality?.nominal_parcels ?? m.stats.nominal_parcels ?? 0;
-    const where = area(m);
 
     // ---- 01 Location: counties north to south (any mix), then the largest markets in them -------
     const toggleCounty = (code: number) => {
@@ -317,22 +315,6 @@ export class FilterPanel {
 
     appendAll(
       this.root,
-      h(
-        'header',
-        { class: 'brand' },
-        h('div', { class: 'brand-mark', 'aria-hidden': 'true' }, h('i'), h('i'), h('i')),
-        h(
-          'div',
-          { class: 'brand-text' },
-          h('div', { class: 'brand-name' }, APP_NAME),
-          h('div', { class: 'brand-sub' }, where.n > 1 ? `${where.span} · ${where.n} counties` : where.names),
-        ),
-        h(
-          'button',
-          { type: 'button', class: 'icon-btn brand-help', title: 'How it works (press ?)', 'aria-label': 'How it works', onclick: () => this.handlers.onHelp() },
-          icon('help', 16),
-        ),
-      ),
       sample
         ? h('div', { class: 'source-flag' }, h('strong', null, 'Sample data.'), ' Synthetic parcels for demonstration only.')
         : null,

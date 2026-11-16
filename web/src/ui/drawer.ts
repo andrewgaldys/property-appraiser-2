@@ -189,6 +189,11 @@ export class Drawer {
       { k: 'Years held', v: hold.text, sub: hold.minimum ? 'minimum' : undefined, info: hold.caption, cls: `hold hold-${hold.tier}` },
     ];
     const kf = keyFacts.filter((f) => f.v && f.v !== '—');
+    // Under the owner: open everything they hold, and look them up in the state's records.
+    const ownerActions = lookupRow(r.owner_name, r.county_code, true) ?? h('div', { class: 'lookups compact' });
+    ownerActions.prepend(
+      h('button', { type: 'button', class: 'btn solid sm', title: 'Everything this owner holds, with mailing addresses and related entities', onclick: () => this.handlers.onOwnerProfile() }, icon('user', 14), 'Owner profile'),
+    );
 
     appendAll(
       this.top,
@@ -238,7 +243,7 @@ export class Drawer {
               r.owner_name || 'Owner not reported',
             ),
             portfolio ? h('span', { class: 'kf-sub' }, `Portfolio of ${portfolio.exact ? '' : '≥ '}${int(portfolio.total)} parcels (below)`) : null,
-            lookupRow(r.owner_name, r.county_code, true),
+            ownerActions,
           ),
         ),
       ),
@@ -319,12 +324,6 @@ export class Drawer {
         'p',
         { class: 'cap' },
         'Phone and email are not on the tax roll. For a company, Sunbiz lists the registered agent and the managers or officers, with their addresses.',
-      ),
-      h(
-        'button',
-        { type: 'button', class: 'btn solid sm op-open', onclick: () => this.handlers.onOwnerProfile() },
-        icon('arrow', 14),
-        'Owner profile',
       ),
     ];
     if (portfolio === undefined) {

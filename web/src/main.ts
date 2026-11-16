@@ -29,6 +29,7 @@ import { ownerRefOf } from './results';
 import { LocalScreenRepository, SCREEN_KEYS, paramsScreen, screenParams, type ScreenState } from './screens';
 import { MAX_SET, resolveSearch } from './search';
 import { Toolbar } from './ui/toolbar';
+import { buildTopbar } from './ui/topbar';
 import { Tooltip } from './ui/tooltip';
 
 // ---- URL hash: MapLibre owns `map=`, we own `p=` (selected parcel) ----------------
@@ -237,7 +238,7 @@ async function boot(): Promise<void> {
   const legend = new Legend(mapEl, manifest, store);
 
   // Owners & parcels tables under the map: every matching parcel, grouped into owners.
-  const RESULTS_BAR = 46;
+  const RESULTS_BAR = 54;
   /** True while a link or saved screen sets the table: the map keeps its (linked) center. */
   let restoring = false;
   const results = new ResultsPanel(manifest, data, store, {
@@ -253,14 +254,26 @@ async function boot(): Promise<void> {
     },
     viewBbox: () => mapc.viewBbox(),
     onStateChange: () => writeScreenHash(),
-    onCounts: (n) => panel.setMatches(n),
+    onCounts: (n) => {
+      panel.setMatches(n);
+      emptyNote.hidden = !n || n.parcels > 0;
+    },
   });
+  // Nothing matches: say so on the map, with the way out.
+  const emptyNote = h(
+    'div',
+    { class: 'empty-note', role: 'status', hidden: true },
+    h('b', null, 'No parcels match these filters.'),
+    h('span', null, 'Remove a filter above, or start over.'),
+    h('button', { type: 'button', class: 'btn solid sm', onclick: () => store.set({ filters: { ...DEFAULT_FILTERS }, search: null }) }, 'Reset all filters'),
+  );
+  mapEl.append(emptyNote);
   mapEl.append(results.el);
   mapEl.style.setProperty('--results-h', `${RESULTS_BAR}px`);
   mapc.map.on('moveend', () => results.mapMoved());
   window.addEventListener('resize', () => results.relayout());
 
-  // Map overlay, top-left: [Filters (narrow screens)] [basemap + lens], then the applied-filter chips.
+  // Top bar: [Filters (narrow screens)] brand, search, data readout, actions.
   const panelToggle = h(
     'button',
     {
@@ -285,14 +298,14 @@ async function boot(): Promise<void> {
       void select(pid, { fly: true });
     },
   });
-  mapEl.append(
-    h(
-      'div',
-      { class: 'map-top' },
-      h('div', { class: 'map-top-row' }, panelToggle, searchBox.el, new Toolbar(store).el),
-      new ActiveFilters(store).el,
-    ),
-  );
+  buildTopbar(document.getElementById('topbar')!, manifest, {
+    panelToggle,
+    search: searchBox.el,
+    onHelp: () => help.open(),
+    onCopyLink: () => copyLink('Link to this screen copied'),
+  });
+  // Map overlay, top-left: basemap + lens, then the applied-filter chips.
+  mapEl.append(h('div', { class: 'map-top' }, h('div', { class: 'map-top-row' }, new Toolbar(store).el), new ActiveFilters(store).el));
 
   function setPanelOpen(open: boolean): void {
     document.body.classList.toggle('panel-open', open);

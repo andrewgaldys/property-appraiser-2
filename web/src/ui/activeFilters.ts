@@ -60,7 +60,7 @@ export class ActiveFilters {
     if (!chips.length) return;
     const set = (patch: Partial<Filters>) => this.store.set({ filters: { ...this.store.get().filters, ...patch } });
     this.el.append(
-      h('span', { class: 'af-label' }, 'Filters'),
+      h('span', { class: 'af-label' }, 'Showing'),
       ...chips.map((c) =>
         h(
           'span',
