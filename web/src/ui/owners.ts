@@ -66,7 +66,7 @@ export class OwnersPanel {
     this.el = h(
       'details',
       { class: 'sec owners', 'data-sec': 'owners' },
-      h('summary', null, h('span', { class: 'sec-title' }, 'Top owners'), this.sum, icon('chevron', 16)),
+      h('summary', null, h('span', { class: 'sec-title' }, 'Top owners on the map'), this.sum, icon('chevron', 16)),
       h('div', { class: 'sec-body' }, h('div', { class: 'ow-head' }, seg, infoTip('top owners', INFO)), this.list, this.foot),
     ) as HTMLDetailsElement;
     this.el.open = open;
@@ -90,9 +90,16 @@ export class OwnersPanel {
     }
   }
 
-  setStats(s: ViewStats): void {
+  /** Owners for the view; null while the totals are still being loaded. */
+  setStats(s: ViewStats | null): void {
     this.stats = s;
-    this.render(s);
+    if (s) this.render(s);
+    else {
+      clear(this.list);
+      this.sum.textContent = '';
+      this.foot.textContent = '';
+      this.list.append(h('li', { class: 'ow-empty' }, 'Loading owners…'));
+    }
   }
 
   /** The label for a row now, or null while it is being looked up (the row re-renders when it lands). */

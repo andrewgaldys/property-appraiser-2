@@ -1,43 +1,54 @@
+import { STARTER_SCREENS } from '../config';
 import { h, icon } from '../dom';
 import { loadUi, saveUi } from '../state';
+import type { Manifest } from '../types';
+import { area } from './facts';
 
 export interface HintActions {
-  onPickMarket(): void;
-  onRunScreen(): void;
+  /** Run a starter screen (config STARTER_SCREENS). */
+  onStarter(id: string): void;
+  onHelp(): void;
 }
 
 /**
- * First-visit card: what the tool does in one sentence and where to start. Dismissed for good
- * by its close button or either action (remembered per browser); it also steps aside once a
- * parcel is opened.
+ * First-visit card: what the tool is for in one sentence, and three example lists that each show
+ * the whole workflow in one click. Dismissed for good by its close button or any action
+ * (remembered per browser); it also steps aside once someone filters or opens a parcel.
  */
 export class FirstVisitHint {
   private el: HTMLElement | null = null;
 
-  constructor(container: HTMLElement, actions: HintActions) {
-    if (loadUi({ hintDismissed: false }).hintDismissed) return;
+  /** `show: false` skips the card for this visit only (someone arrived on a link to a screen, parcel or owner). */
+  constructor(container: HTMLElement, manifest: Manifest, actions: HintActions, show = true) {
+    if (!show || loadUi({ hintDismissed: false }).hintDismissed) return;
     const act = (fn: () => void) => () => {
       this.dismiss();
       fn();
     };
+    const where = area(manifest);
     this.el = h(
       'section',
       { class: 'hint', role: 'note', 'aria-label': 'Getting started' },
+      h('p', { class: 'eyebrow' }, 'Start here'),
+      h('h2', { class: 'hint-lead' }, 'Find the owners worth calling.'),
       h(
-        'div',
+        'p',
         { class: 'hint-text' },
-        h(
-          'p',
-          { class: 'hint-lead' },
-          'Every commercial and multifamily parcel in Martin, St. Lucie and Palm Beach counties, in 3D: what it’s worth, when it last sold and who owns it.',
-        ),
-        h('p', { class: 'hint-cta' }, 'Pick a market or run a screen to start. Click any parcel for its details.'),
+        `Every commercial and multifamily parcel ${where.n > 1 ? `from ${where.span}` : `in ${where.names}`}: what it is worth, when it last sold, and who owns it.`,
       ),
+      h('p', { class: 'hint-cta' }, 'Try a list:'),
       h(
         'div',
         { class: 'hint-actions' },
-        h('button', { type: 'button', class: 'btn solid sm', onclick: act(actions.onPickMarket) }, icon('pin', 14), 'Pick a market'),
-        h('button', { type: 'button', class: 'btn ghost sm', onclick: act(actions.onRunScreen) }, icon('filters', 14), 'Run a screen'),
+        STARTER_SCREENS.slice(0, 3).map((sc) =>
+          h('button', { type: 'button', class: 'hint-starter', onclick: act(() => actions.onStarter(sc.id)) }, h('span', null, sc.label), icon('arrow', 14)),
+        ),
+      ),
+      h(
+        'p',
+        { class: 'hint-foot' },
+        'Or build your own in the sidebar. ',
+        h('button', { type: 'button', class: 'linklike', onclick: () => actions.onHelp() }, 'How it works'),
       ),
       h('button', { type: 'button', class: 'icon-btn hint-close', 'aria-label': 'Dismiss', onclick: () => this.dismiss() }, icon('close', 14)),
     );

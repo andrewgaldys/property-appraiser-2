@@ -37,10 +37,15 @@ class County:
 
 
 COUNTIES: dict[int, County] = {
+    41: County(41, "Indian River", "IRC", "12061", (-80.89, 27.55, -80.31, 27.87)),
+    66: County(66, "St. Lucie", "SLC", "12111", (-80.68, 27.20, -80.16, 27.56)),
     53: County(53, "Martin", "MAR", "12085", (-80.69, 26.95, -80.08, 27.27)),
     60: County(60, "Palm Beach", "PBC", "12099", (-80.89, 26.31, -80.03, 26.98)),
-    66: County(66, "St. Lucie", "SLC", "12111", (-80.68, 27.20, -80.16, 27.56)),
+    16: County(16, "Broward", "BRO", "12011", (-80.89, 25.95, -80.01, 26.36)),
+    23: County(23, "Miami-Dade", "MDC", "12086", (-80.88, 25.13, -80.11, 25.98)),
 }
+# Florida's Atlantic coast from Indian River down to Miami-Dade, north to south.
+COUNTY_ORDER: tuple[int, ...] = (41, 66, 53, 60, 16, 23)
 COUNTY_CODES: tuple[int, ...] = tuple(sorted(COUNTIES))
 
 # Standardized field name -> short vector-tile attribute. Tiles only carry what the
@@ -162,7 +167,14 @@ OUT_OF_AREA_MILES = float(os.environ.get("PA2_OUT_OF_AREA_MILES", "25"))
 
 # Postal place names inside the three counties that no parcel in this dataset uses as its site
 # city (PO-box towns), mapped to the site city around them, so their owners can be placed.
-MAILING_PLACE_ALIASES = {"PORT SALERNO": "STUART", "LAKE HARBOR": "SOUTH BAY"}
+MAILING_PLACE_ALIASES = {
+    "PORT SALERNO": "STUART",
+    "LAKE HARBOR": "SOUTH BAY",
+    "WABASSO": "VERO BEACH",
+    "ROSELAND": "SEBASTIAN",
+    "HALLANDALE": "HALLANDALE BEACH",
+    "PRINCETON": "HOMESTEAD",
+}
 
 # A portfolio list stores at most this many cards; the total count is always exact.
 PORTFOLIO_MAX_ITEMS = 500

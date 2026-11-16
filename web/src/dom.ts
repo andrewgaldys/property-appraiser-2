@@ -59,6 +59,12 @@ const ICONS: Record<string, string> = {
   legend: 'M2.5 4.5h2M6.5 4.5h7M2.5 8h2M6.5 8h7M2.5 11.5h2M6.5 11.5h7',
   warn: 'M8 2.5l6 10.5H2zM8 6.5v3M8 11.2v.2',
   pin: 'M8 14s4.5-4.2 4.5-7.5a4.5 4.5 0 10-9 0C3.5 9.8 8 14 8 14zM8 5.2a1.3 1.3 0 110 2.6 1.3 1.3 0 010-2.6z',
+  external: 'M7 3.5H3.5v9h9V9M9.5 2.5h4v4M13.5 2.5L7.5 8.5',
+  help: 'M8 2a6 6 0 110 12A6 6 0 018 2zM6.3 6.4a1.8 1.8 0 113 1.3c-.7.5-1.3.9-1.3 1.8M8 11.5v.2',
+  check: 'M3.5 8.5l3 3 6-7',
+  user: 'M8 8a2.6 2.6 0 100-5.2A2.6 2.6 0 008 8zM3 13.5c.5-2.3 2.5-3.6 5-3.6s4.5 1.3 5 3.6',
+  layers: 'M8 2.5l5.5 3L8 8.5l-5.5-3zM2.5 8.2L8 11.2l5.5-3M2.5 10.8L8 13.8l5.5-3',
+  spark: 'M8 2v3M8 11v3M2 8h3M11 8h3M4 4l2 2M10 10l2 2M12 4l-2 2M6 10l-2 2',
 };
 
 export function icon(name: keyof typeof ICONS | string, size = 14): SVGSVGElement {
@@ -77,6 +83,32 @@ export function icon(name: keyof typeof ICONS | string, size = 14): SVGSVGElemen
   path.setAttribute('stroke-linejoin', 'round');
   svg.append(path);
   return svg;
+}
+
+/** A link to another site: opens a new tab and passes neither the opener nor the referrer. */
+export function extLink(url: string, attrs?: Attrs | null, ...children: Child[]): HTMLAnchorElement {
+  return h('a', { href: url, target: '_blank', rel: 'noopener noreferrer', ...attrs }, ...children);
+}
+
+/** A small "copy this" icon button that confirms with a toast. */
+export function copyButton(text: string, what: string): HTMLButtonElement {
+  return h(
+    'button',
+    {
+      type: 'button',
+      class: 'icon-btn sm',
+      title: `Copy ${what}`,
+      'aria-label': `Copy ${what}`,
+      onclick: (e: Event) => {
+        e.stopPropagation();
+        void navigator.clipboard?.writeText(text).then(
+          () => toast(`Copied ${what}`),
+          () => undefined,
+        );
+      },
+    },
+    icon('copy', 13),
+  );
 }
 
 export function clear(el: Element): void {

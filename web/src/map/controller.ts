@@ -15,6 +15,7 @@ import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import { Protocol } from 'pmtiles';
 import { LENS_RADIUS, SATELLITE_ATTRIBUTION } from '../config';
 import type { DataStore } from '../data';
+import { viewStats } from '../results';
 import type { Store } from '../state';
 import type { AppState, Bbox, Manifest, OwnerRow, ParcelRecord, PortfolioItem, TileProps, ViewStats } from '../types';
 import type { Tooltip } from '../ui/tooltip';
@@ -56,7 +57,8 @@ export interface MapEvents {
   onReady(): void;
   onSelect(props: TileProps): void;
   onClear(): void;
-  onStats(stats: ViewStats): void;
+  /** Totals for the parcels in view; null while they are not known yet (the parcel table is still loading). */
+  onStats(stats: ViewStats | null): void;
 }
 
 type FeatureKey = { source: string; sourceLayer?: string; id: string | number };
@@ -145,7 +147,12 @@ export class MapController {
     this.applyBasemapMode(this.store.get());
     this.bindEvents();
     this.store.subscribe((s, prev) => this.apply(s, prev));
+    // Once the parcel table is in, the totals switch to it (exact at every zoom).
+    this.data.onIndexProgress((fraction) => {
+      if (fraction === 1) this.scheduleStats();
+    });
     this.ready = true;
+    this.scheduleStats();
     this.events.onReady();
   }
 
@@ -281,9 +288,22 @@ export class MapController {
 
   private computeStats(): void {
     if (!this.ready) return;
+    // With the parcel table loaded, count from it: exact, and a few milliseconds whatever the zoom.
+    const ix = this.data.loadedIndex;
+    if (ix) {
+      const s = this.store.get();
+      this.events.onStats(viewStats(ix, s.filters, s.search, nominalMax(this.manifest), this.viewBbox(), s.ownerGroup, this.agentKeys));
+      return;
+    }
+    // Until then, count the drawn parcels where that is cheap (parcel zooms). A wide view can hold
+    // every dot in the dataset, so its totals wait for the table.
     const zoom = this.map.getZoom();
     const polyMin = this.manifest.tiles.polygons.minzoom;
-    const layers = zoom < polyMin + 0.5 ? [L_POINTS] : [this.store.get().extrude === 'flat' ? L_FLAT : L_3D];
+    if (zoom < polyMin + 0.5) {
+      this.events.onStats(null);
+      return;
+    }
+    const layers = [this.store.get().extrude === 'flat' ? L_FLAT : L_3D];
     const feats = this.map.queryRenderedFeatures({ layers });
     // Nominal-value parcels ($100 common areas, sub-parcels) stay on the map but out of the totals,
     // unless the viewer includes them.

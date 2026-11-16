@@ -6,7 +6,7 @@ import '@fontsource/ibm-plex-mono/500.css';
 import './styles/app.css';
 import './styles/brief.css';
 
-import { DEFAULT_FILTERS } from './config';
+import { DEFAULT_FILTERS, STARTER_SCREENS } from './config';
 import { DataStore } from './data';
 import { h, icon, toast } from './dom';
 import { MapController } from './map/controller';
@@ -16,7 +16,8 @@ import { ActiveFilters } from './ui/activeFilters';
 import { AerialCard } from './ui/aerial';
 import { Brief } from './ui/brief';
 import { Drawer } from './ui/drawer';
-import { FilterPanel, type SectionId } from './ui/filters';
+import { FilterPanel } from './ui/filters';
+import { HelpDialog } from './ui/help';
 import { FirstVisitHint } from './ui/hint';
 import { Legend } from './ui/legend';
 import { OwnerProfile } from './ui/ownerProfile';
@@ -178,6 +179,9 @@ async function boot(): Promise<void> {
         const owner = hashParam('o');
         if (owner) void openOwnerFromHash(owner, !pid);
         if (pid) void select(pid, { fly: true });
+        // The parcel table backs the totals, the owners list and search: on a desktop-size screen,
+        // fetch it once the map is up. Phones fetch it when it is first needed (it is a large file).
+        if (!window.matchMedia('(max-width: 900px)').matches) window.setTimeout(() => results.preload(), 1200);
       },
       onSelect: (props: TileProps) => void select(props.pid, { hint: props }),
       onClear: () => clearSelection(),
@@ -189,12 +193,20 @@ async function boot(): Promise<void> {
     tooltip,
   );
 
+  const help = new HelpDialog(manifest);
   const panel = new FilterPanel(document.getElementById('filters')!, manifest, store, {
-    onCounty: (code) => {
-      if (!code) return;
-      const c = manifest.counties.find((x) => x.code === code);
-      if (c) mapc.fitBbox(c.bbox, { maxZoom: 12.5 });
+    onCounties: (codes) => {
+      const boxes = codes.map((code) => manifest.counties.find((x) => x.code === code)?.bbox).filter((b): b is Bbox => !!b);
+      if (!boxes.length) return;
+      const union: Bbox = [
+        Math.min(...boxes.map((b) => b[0])),
+        Math.min(...boxes.map((b) => b[1])),
+        Math.max(...boxes.map((b) => b[2])),
+        Math.max(...boxes.map((b) => b[3])),
+      ];
+      mapc.fitBbox(union, { maxZoom: 12.5 });
     },
+    onHelp: (section) => help.open(section),
     onMarket: (b: Bbox) => {
       if (window.matchMedia('(max-width: 900px)').matches) setPanelOpen(false);
       mapc.fitBbox(b, { maxZoom: 15.3, pitch: store.get().extrude === 'flat' ? 0 : 55 });
@@ -204,22 +216,24 @@ async function boot(): Promise<void> {
       results.show('owners');
     },
   });
-  // Top owners in view: sits right under the In-view totals it shares a computation with.
+  // Top owners in view: an insight panel under the list-building steps.
   const owners = new OwnersPanel(manifest, data, store, {
     onPick: (row) => {
       if (window.matchMedia('(max-width: 900px)').matches) setPanelOpen(false);
       void openOwner({ kind: row.kind, id: row.id }, { fit: false });
     },
   });
-  document.querySelector('#filters .inview')?.after(owners.el);
+  panel.slot('insights').append(owners.el);
 
-  // Prospecting presets + saved screens, right under Top owners.
+  // Owner signals are step 3 of the sidebar; saved and starter screens get their own section.
   const prospecting = new ProspectingPanel(manifest, store, new LocalScreenRepository(), {
     capture: () => captureScreen(true),
     apply: (state) => applyScreen(state, true),
     copyLink: () => copyLink('Link to this screen copied'),
+    starter: (id) => applyStarter(id),
   });
-  owners.el.after(prospecting.el);
+  panel.slot('signals').append(prospecting.el);
+  panel.slot('saved').append(prospecting.savedEl);
   const legend = new Legend(mapEl, manifest, store);
 
   // Owners & parcels tables under the map: every matching parcel, grouped into owners.
@@ -239,6 +253,7 @@ async function boot(): Promise<void> {
     },
     viewBbox: () => mapc.viewBbox(),
     onStateChange: () => writeScreenHash(),
+    onCounts: (n) => panel.setMatches(n),
   });
   mapEl.append(results.el);
   mapEl.style.setProperty('--results-h', `${RESULTS_BAR}px`);
@@ -282,17 +297,24 @@ async function boot(): Promise<void> {
   function setPanelOpen(open: boolean): void {
     document.body.classList.toggle('panel-open', open);
     panelToggle.setAttribute('aria-expanded', String(open));
+    if (open) results.preload(); // the sidebar's totals and match count read the parcel table
   }
 
-  /** Bring a sidebar section into view (on narrow screens the sidebar slides in first). */
-  function showSection(id: SectionId): void {
-    if (window.matchMedia('(max-width: 900px)').matches) setPanelOpen(true);
-    panel.openSection(id);
+  /** A starter screen: keeps the counties already picked, sets the rest, and opens the owners list. */
+  function applyStarter(id: string): void {
+    const sc = STARTER_SCREENS.find((x) => x.id === id);
+    if (!sc) return;
+    store.set({ filters: { ...DEFAULT_FILTERS, counties: store.get().filters.counties, ...sc.filters }, search: null });
+    searchBox.setText('');
+    if (window.matchMedia('(max-width: 900px)').matches) setPanelOpen(false);
+    results.show('owners');
   }
-  const firstHint = new FirstVisitHint(mapEl, {
-    onPickMarket: () => showSection('markets'),
-    onRunScreen: () => showSection('screens'),
-  });
+  const firstHint = new FirstVisitHint(
+    mapEl,
+    manifest,
+    { onStarter: (id) => applyStarter(id), onHelp: () => help.open() },
+    !linked && !hashParam('p') && !hashParam('o'),
+  );
   // The hint has done its job once someone filters.
   store.subscribe((s, prev) => {
     if (firstHint.visible && s.filters !== prev.filters) firstHint.dismiss();
@@ -529,7 +551,12 @@ async function boot(): Promise<void> {
   });
 
   document.addEventListener('keydown', (e) => {
-    if (e.key !== 'Escape' || brief.isOpen) return;
+    if (e.key === '?' && !e.metaKey && !e.ctrlKey && !e.altKey && !(e.target instanceof HTMLElement && e.target.closest('input, textarea, select, [contenteditable]'))) {
+      e.preventDefault();
+      help.open();
+      return;
+    }
+    if (e.key !== 'Escape' || brief.isOpen || help.isOpen) return;
     if (document.body.classList.contains('panel-open')) setPanelOpen(false);
     else if (drawer.isOpen) clearSelection();
     else if (profile.isOpen) closeOwner();

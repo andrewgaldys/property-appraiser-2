@@ -1,7 +1,7 @@
 /**
  * Every parcel in one client-side table (pipeline/pa2/publish.py parcel_index), loaded on first use
  * of search or the results tables. Search, the Owners / Parcels tables, owner profiles and CSV
- * export all read it, so a screen covers all three counties rather than only what the map has
+ * export all read it, so a screen covers every county rather than only what the map has
  * loaded. Missing values stay null, never 0.
  */
 

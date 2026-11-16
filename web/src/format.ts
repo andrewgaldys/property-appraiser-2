@@ -82,10 +82,19 @@ const PID_GROUPS: Record<number, number[]> = {
   60: [2, 2, 2, 2, 2, 3, 4], // Palm Beach PCN
   53: [2, 2, 2, 3, 3, 5, 1], // Martin PCN
   66: [4, 3, 4, 3, 1], // St. Lucie parcel ID
+  16: [4, 2, 2, 4], // Broward folio
+  23: [2, 4, 3, 4], // Miami-Dade folio
 };
+const INDIAN_RIVER = 41;
+const IRC_GROUPS = [2, 2, 2, 5, 4, 5]; // then ".<check digit>", which the normalized id keeps only when not 0
 
 /** Display a normalized parcel id in the county's familiar dashed format when lengths match. */
 export function parcelId(pid: string, county: number): string {
+  if (county === INDIAN_RIVER && (pid.length === 20 || pid.length === 21)) {
+    let i = 0;
+    const parts = IRC_GROUPS.map((n) => pid.slice(i, (i += n)));
+    return `${parts.join('-')}.${pid[20] ?? '0'}`;
+  }
   const groups = PID_GROUPS[county];
   if (!groups || groups.reduce((a, b) => a + b, 0) !== pid.length) return pid;
   const out: string[] = [];

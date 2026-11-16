@@ -1,20 +1,21 @@
 # Property Appraiser 2.0 · V0.1
 
-3D real-estate and parcel intelligence for **Martin (53)**, **St. Lucie (66)** and **Palm Beach (60)** counties, Florida.
+3D real-estate and parcel intelligence for Florida's Atlantic coast from **Indian River** down to **Miami-Dade**: Indian River (41), St. Lucie (66), Martin (53), Palm Beach (60), Broward (16) and Miami-Dade (23) counties.
 It is a static site (GitHub Pages, no server, no API keys) that streams parcel vector tiles from PMTiles files with HTTP Range requests.
 A Python pipeline pulls the parcels from the Florida Statewide Cadastral layer (or reads FDOR tax-roll files) and writes that bundle.
 
-- **Real parcels**: every multifamily, commercial, industrial and institutional parcel in the three counties on the 2026 roll (46,733 parcels, $109.2B assessed market value).
+- **Real parcels**: every multifamily, commercial, industrial and institutional parcel in the six counties on the 2026 roll (174,215 parcels, $447.6B assessed market value).
 - 3D parcel extrusions by **assessed market value**, **building SF** or **years held** (or flat), colored by **asset class** (default), value, SF, years held or land share.
 - Every parcel is outlined: class-colored strokes in 2D, and a light **roof rim** on each 3D block. House numbers and building SF label parcels from zoom 15.
 - Hover tooltip: assessed market value, site address, property type, owner, county, building SF, units (multifamily and mixed use only) and years held.
 - **Satellite**: a spyglass lens around the cursor (zoom 14+, toggle with `S`), a Map / Hybrid / Split basemap switch, and a live aerial of the selected parcel in the drawer.
 - **Prospecting screens**: five presets a broker can mix (long-term holders, underbuilt sites, out-of-area owners, small portfolio owners, estate / trust owned) on top of every other filter; named **saved screens**; and a page link that always reopens the exact screen.
-- **Owners & parcels tables** (under the map): every parcel matching the screen and search, across all three counties or only the map view, grouped into owners with related entities, parcel counts, value, building SF, asset classes, prospecting signals, longest and average hold, and mailing address. Sortable, linked to the map both ways, and exportable to CSV for a CRM or mail merge.
-- **Owner profiles**: everything an owner holds in the three counties, a mini map, an acquisition timeline (last priced sale of each parcel), average hold, asset-class mix, mailing addresses and related entities; CSV export of the holdings.
+- **Owners & parcels tables** (under the map): every parcel matching the screen and search, across all six counties or only the map view, grouped into owners with related entities, parcel counts, value, building SF, asset classes, prospecting signals, longest and average hold, and mailing address. Sortable, linked to the map both ways, and exportable to CSV for a CRM or mail merge.
+- **Sunbiz lookups**: every owner in the parcel panel, the owner profile and the CSV exports carries a link to Florida's state business records (the entity itself, or for a person the companies that list them), plus an owner-type badge read from the name.
+- **Owner profiles**: everything an owner holds in the six counties, a mini map, an acquisition timeline (last priced sale of each parcel), average hold, asset-class mix, mailing addresses and related entities; CSV export of the holdings.
 - **Search** (top-left of the map, or press `/`): owner names, site addresses, cities, parcel IDs (dashed or not), property types and shared mailing addresses. Results come back grouped as owners, mailing addresses and parcels; pick one parcel to fly to it, or show an owner, a mailing address or every match on the map as a removable filter.
 - **Top owners in view**: who controls the parcels on screen, after filters, ranked by assessed value, with each owner's share and the top five's combined share (ownership concentration). Group by owner name, or by mailing address to see the sponsor behind single-asset LLCs. Click an owner to open their most valuable parcel and spotlight the portfolio.
-- **Sidebar** in collapsible sections (Top owners, Prospecting, County, Markets, Asset class, Screens, Display) under the live **In view** totals. Screens: minimum years held, minimum lot size, maximum building-to-land value, and whether nominal-value parcels count. Explanations sit behind ⓘ buttons.
+- **Sidebar** as a guided flow under the live **On the map now** totals: *01 Location* (any mix of counties, north to south, and each county's largest markets), *02 Asset class*, *03 Owner signals*, then *More filters* (minimum years held, minimum lot size, maximum building-to-land value, nominal-value parcels) and a **See matching owners** button with the match count. Top owners, Saved screens (with four one-click starter screens) and Map style follow. Explanations sit behind ⓘ buttons, and **How it works** (the ? button or key) explains the workflow, the map and each county's data coverage.
 - **Applied filters** show as removable chips over the map, with *Reset all*. The legend collapses to a button (and steps aside on its own while the drawer needs the room). A one-time hint suggests where to start.
 - **Property drawer**, most decision-relevant first: address, asset class and use, then assessed market value, building SF, lot, residential units, last sale, years held and owner; then the aerial, value and building details, sale and hold, and the **true-owner portfolio** across all three counties (matched on normalized owner name *or* mailing address). Identifiers and legal text fold into *More details*; empty fields are left out.
 - One-click, print-styled **Property Brief** (Letter, Save as PDF) with a 3D view and an aerial, plus shareable parcel links (`#…&p=<parcel id>`).
@@ -59,10 +60,10 @@ web/                               Vite + TypeScript + MapLibre GL JS 6 + pmtile
 .github/workflows/deploy.yml       build web/ and publish to GitHub Pages
 ```
 
-**Data bundle (74 MB).** Polygon tiles (z12–15, 24 MB) and centroid tiles (z8–12, 10 MB) carry only what the map filters, colors and labels.
-The parcel index (`index.json`, 10.8 MB, about 2.6 MB gzipped: one row per parcel with what search, the results tables, owner profiles and CSV export need) loads the first time someone uses search or opens the tables.
-Full parcel records sit in 256 small JSON shards keyed by hash(parcel ID), and owner portfolios in shards keyed by owner group.
-A click fetches one shard, whatever the dataset size. The overview (zoom 8) loads under 2 MB of tiles; every file is under 25 MB.
+**Data bundle (about 266 MB for six counties).** Polygon tiles (z12–15, 85 MB) and centroid tiles (z8–12, 36 MB) carry only what the map filters, colors and labels.
+The parcel index (`index.json`, 41 MB, about 10 MB gzipped: one row per parcel with what the totals, search, the results tables, owner profiles and CSV export need) is fetched once, shortly after the map appears, with a progress readout in the results bar.
+Full parcel records sit in 256 JSON shards keyed by hash(parcel ID) (83 MB), and owner portfolios in shards keyed by owner group (31 MB). A click fetches one shard, whatever the dataset size.
+The largest file is the 85 MB polygon archive: under GitHub's 100 MB limit, but see *Bundle size and hosting* before adding more counties or condo units.
 
 ## Real parcels: Florida Statewide Cadastral
 
@@ -72,18 +73,19 @@ pipeline/.venv/bin/python pipeline/fetch_real_tricounty_parcels.py
 
 This queries the statewide cadastral FeatureServer (FDOR's tax roll joined to county parcel polygons, published on ArcGIS Online):
 `https://services9.arcgis.com/Gh9awoU677aKree0/arcgis/rest/services/Florida_Statewide_Cadastral/FeatureServer/0`.
-It then publishes `web/public/data/` and `pipeline/out/parcels.parquet`. A first run takes a few minutes; a cached re-run takes about 30 seconds.
+It then publishes `web/public/data/` and `pipeline/out/parcels.parquet`. Counties come from `COUNTIES` in pipeline/pa2/config.py (`--counties 60,16` runs a subset).
+A first run downloads for about 15 minutes and queries the county sale tables for a few more; a cached re-run takes about 2 minutes.
 
 **What it keeps (DOR use codes).** 003 multifamily 10+, 008 multifamily 2–9, 010–039 vacant commercial and commercial (stores, centers, offices, hotels, mobile home *parks* = 028, …), 040–049 vacant industrial and industrial, 070–079 institutional.
 
 Two codes are opt-in, because each record is one dwelling rather than an investment property:
-- **004 condominium units** (`--include-condo-units`). Every unit is its own parcel: well over 85,000 more records in these counties (more than everything else combined), mostly stacked footprints of the same buildings.
+- **004 condominium units** (`--include-condo-units`). Every unit is its own parcel: well over 85,000 more records in Martin, St. Lucie and Palm Beach alone (more than everything else there combined), mostly stacked footprints of the same buildings.
 - **002 individual mobile homes** (`--include-mobile-homes`, 9,500+ records).
 
 **How it queries.** On this statewide table only `CO_NO`, `OBJECTID`, `PARCEL_ID`, `OWN_NAME` and the shape are indexed. County-wide filters on `DOR_UC` time out. Each county does occupy one contiguous `OBJECTID` block, though.
-So the script walks each block in 25,000-ID windows (40 in all), pages through each window with `resultOffset` / `resultRecordCount=2000` (`outSR=4326`), and simplifies server-side by ~0.5 m.
+So the script walks each block in 25,000-ID windows (100 in all), pages through each window with `resultOffset` / `resultRecordCount=2000` (`outSR=4326`), and simplifies server-side by ~0.5 m.
 Reliability:
-- A page that keeps timing out is retried at the same offset with half the page size, down to 250.
+- A page that keeps timing out is retried at the same offset with half the page size, down to 250. The size that worked is remembered per county, and counties over 400,000 parcels (Broward, Miami-Dade, Palm Beach) start at 1,000: their full pages time out.
 - A window that still fails does not stop the others; failed windows get a second, sequential pass.
 - If anything is still missing, nothing is published and the exit code is 1. Re-running resumes from the cache.
 
@@ -93,7 +95,7 @@ Downloads are cached per window under `pipeline/raw/cadastral/<fingerprint>/`. A
 |---|---|
 | `--include-condo-units` / `--include-mobile-homes` | Add DOR 004 / 002 (see above) |
 | `--codes 003,008,…` | Any other code list |
-| `--no-county-sales` / `--refresh-sales` | Skip the county sale histories / re-query Palm Beach's latest transfers (see *Sales history* below) |
+| `--no-county-sales` / `--refresh-sales` | Skip the county sale histories / re-query the county GIS sale tables: Palm Beach, Broward, Miami-Dade, Indian River (see *Sales history* below) |
 | `--county-sales-dir DIR` | Where the county sales exports live (default `pipeline/raw/county_sales/`) |
 | `--nominal-value-max 1000` | Just values below this are flagged *nominal value* (see *Data quality* below) |
 | `--sdf "…/*SDF*.zip"` | FDOR Sales Data Files of earlier rolls, if you have them (the portal only posts the current roll) |
@@ -103,14 +105,14 @@ Downloads are cached per window under `pipeline/raw/cadastral/<fingerprint>/`. A
 | `--shard-hex 2` / `--tiler auto\|tippecanoe\|python` | Shard count (256) / tiler (tippecanoe if installed, else pure Python) |
 | `--fetch-only` | Fill the cache without publishing |
 
-Run of 10 Nov 2026 (2026 roll): Palm Beach 33,851 · St. Lucie 7,861 · Martin 5,021.
-By class: Retail / Commercial 17,970 · Multifamily 2–9 12,793 · Industrial 7,908 · Vacant Commercial / Industrial 4,530 · Institutional 2,513 · Multifamily 10+ 1,019.
+Run of 15 Nov 2026 (2026 roll): Miami-Dade 69,638 · Broward 53,258 · Palm Beach 33,851 · St. Lucie 7,861 · Martin 5,021 · Indian River 4,586.
+By class: Multifamily 2–9 61,550 · Retail / Commercial 57,674 · Industrial 24,424 · Vacant Commercial / Industrial 16,731 · Institutional 7,386 · Multifamily 10+ 6,450.
 
 ### Sales history and hold periods
 
 The cadastral layer carries only the roll's two most recent sale slots (`SALE_YR1/2`): on the 2026 roll, 2025–26 sales (7% of these parcels).
 The FDOR Data Portal posts only the current roll, so older SDF files are not available there either.
-The three property appraisers publish much longer histories for free, and the fetch merges them by default ([pipeline/pa2/county_sales.py](pipeline/pa2/county_sales.py)):
+The counties publish much longer histories for free, and the fetch merges them by default ([pipeline/pa2/county_sales.py](pipeline/pa2/county_sales.py)):
 
 | County | Source | What it has | Records complete from | Matched |
 |---|---|---|---|---|
@@ -118,8 +120,14 @@ The three property appraisers publish much longer histories for free, and the fe
 | Palm Beach | County GIS "Property Information Table" (ArcGIS Online, `PBCGOV_GIS`), queried by parcel number and cached | Each parcel's latest transfer (can be newer than the CAMA cut) | | 32,184 of 33,851 |
 | Martin | Property Appraiser CAMA export `real_transfers.zip` ([Data Downloads](https://www.pamartinfl.gov/tools-resources/data-downloads) → Tax Roll / CAMA Database Exports → Real Transfers, ~95 MB) | Every recorded transfer, with FDOR qualification codes | 1977 | 4,821 of 5,021 |
 | St. Lucie | Property Appraiser CAMA export `Transactions.zip` ([Data Requests](https://www.paslc.gov/231/Data-Requests) → Data Downloads → Transactions File, ~27 MB; its server only serves browsers, so download it by hand) | Every recorded transfer | 1972 | 7,602 of 7,861 |
+| Broward | County GIS layer "PARCEL POLY BCPA TAXROLL" (Broward County on ArcGIS Online: the Property Appraiser's tax roll joined to parcels), queried by folio and cached | Each parcel's five most recent transfers through 2024: date, documentary stamps paid, qualification code | 1960 | 44,086 of 53,258 |
+| Miami-Dade | County open data "Property Point View" (`PaGISView`, updated weekly), queried by folio and cached | Each folio's latest transfer: date and price (0 on nominal transfers) | latest transfer only | 66,839 of 69,638 |
+| Indian River | County GIS parcel service (`IRCPA/Parcels_MS`), queried by parcel number and cached | Each parcel's latest sale: year, month, price | latest sale only | 3,590 of 4,586 |
 
-Put the exports in `pipeline/raw/county_sales/palm_beach/cama/`, `…/martin/` and `…/stlucie/` (not committed). A county whose export is missing falls back to what remains (Palm Beach: latest transfers only).
+Put the exports in `pipeline/raw/county_sales/palm_beach/cama/`, `…/martin/` and `…/stlucie/` (not committed). A county whose export is missing falls back to what remains (Palm Beach: latest transfers only). The three GIS tables need no download: their answers are cached in `…/broward/`, `…/miami_dade/` and `…/indian_river/`.
+
+- **Broward prices come from documentary stamps.** The layer publishes the stamps paid on each deed, not the price. Price = stamps ÷ the statutory rate in force on the deed date (70¢ per $100 since August 1992, 60¢ from June 1991, 55¢ from July 1987, and so on back: `DOC_STAMP_RATES`; the data's own minimum stamps match that schedule year by year). A deed that paid only the minimum is a nominal transfer, not a $100 sale. The layer stops at 2024; 2025–26 sales come from the state roll.
+- **Latest-transfer counties (Miami-Dade, Indian River).** A priced latest transfer is the last sale, at any age. A nominal one (a deed into an LLC, say) hides the sale before it, so the hold becomes a minimum counted from that transfer, and a long-time owner can fall out of the *Long-term holders* screen. Indian River's Property Appraiser publishes a full CAMA extract ([Downloads](https://www.ircpa.org/site-links/downloads), browser download only) that could replace its latest-sale table.
 "Records complete from" is computed from each export: walking back from today, the first year whose transfer count collapses below a quarter of the five years after it. Dates in the future (typos) and the 1900/1901 placeholders of converted CAMA records are ignored, as are Palm Beach `01-JAN-00`-style dates on pre-2000 deed books.
 
 **Years held** = 2026 − year of the last sale of at least $100 (`--min-sale-price`), from whichever source has the latest one. It is never shown shorter than the records can prove:
@@ -127,9 +135,9 @@ Put the exports in `pipeline/raw/county_sales/palm_beach/cama/`, `…/martin/` a
 - with only nominal transfers since some year (a $10 deed in 2018, and nothing priced after it), the hold shows as "8+ yrs";
 - a parcel no source has any transfer for shows "Not on record" and never passes the hold screen.
 
-The drawer explains which case applies and states the county's coverage; the hold screen's ⓘ lists all three. Minimums pass the hold screen when they are long enough, and the years-held color and height modes use them too.
+The drawer explains which case applies and states the county's coverage; the hold screen's ⓘ and *How it works* list every county's. Minimums pass the hold screen when they are long enough, and the years-held color and height modes use them too.
 
-Run of 10 Nov 2026: years held known for **44,138 parcels (94%)**: Martin 95%, Palm Beach 94% (71% with latest transfers only), St. Lucie 96%. Minimums for 850 more; 1,745 not on record. Median hold: 11 years in Palm Beach, 8 in Martin and St. Lucie.
+Run of 15 Nov 2026: years held known for **150,376 parcels (86%)**; minimums for 9,941 more (6%); 13,898 not on record (8%). The three northern counties with full exports stay at 94–96% known; Broward, Miami-Dade and Indian River depend on what their GIS tables match.
 
 ### Data quality
 
@@ -183,14 +191,14 @@ Re-tile without re-reading the source: `pipeline/.venv/bin/python pipeline/build
 ### Bundle size and hosting
 
 Both builders overwrite only their own files in `web/public/data/`. Check the size with `du -sh web/public/data`.
-The cadastral bundle (63 MB, largest file 24 MB) can be committed. The full roll (~850k parcels) is several hundred MB, and GitHub rejects files over 100 MB, while Pages sites must stay under 1 GB. For that size, pick one of:
+The six-county cadastral bundle (about 266 MB, largest file 85 MB) can still be committed, but each rebuild adds roughly 170 MB to the repository's history, and GitHub rejects files over 100 MB, while Pages sites must stay under 1 GB. The full roll, more counties or condo units go past those limits. Before that, pick one of:
 
 - **GitHub Release asset (works with the included workflow).** Release assets can be up to 2 GB.
   ```bash
   tar -czf pa2-data.tar.gz -C web/public/data .
   ```
   ```bash
-  gh release create data-2026F pa2-data.tar.gz --title "FDOR 2026F data bundle" --notes "Martin, St. Lucie, Palm Beach"
+  gh release create data-2026F pa2-data.tar.gz --title "FDOR 2026F data bundle" --notes "Indian River to Miami-Dade"
   ```
   Then add the repository variable `DATA_RELEASE_TAG=data-2026F` (Settings → Secrets and variables → Actions → Variables).
   The deploy workflow unpacks it over `web/public/data/` before building.
@@ -228,18 +236,20 @@ The search box sits at the top-left of the map (`/` focuses it from anywhere). I
 
 ## Prospecting screens
 
-The sidebar's **Prospecting** section holds five preset screens. Turn on any mix: they combine with each other (a parcel must pass all of them) and with every other filter, the search and the map view. Each preset's ⓘ gives its exact rule in plain language, and an active preset shows as a chip over the map like any other filter.
+The sidebar's **Owner signals** step holds five preset screens. Turn on any mix: they combine with each other (a parcel must pass all of them) and with every other filter, the search and the map view. Each preset's ⓘ gives its exact rule in plain language, and an active preset shows as a chip over the map like any other filter.
 
 | Preset | A parcel matches when | Based on |
 |---|---|---|
 | Long-term holders | Its last sale of $100+ is 15 or more years old (2011 or earlier), or no such sale is on record since at least then (a minimum, "N+ yrs") | County sale records, complete from 1969 (Palm Beach), 1972 (St. Lucie) and 1977 (Martin). Parcels with no sale on record are left out: an unknown hold is not a long one. |
 | Underbuilt sites | Building value is at most 0.5× the land value, on a lot of 0.5 acre or more. Vacant land counts; nominal-value parcels never do. | Just value and land value on the 2026 roll |
-| Out-of-area owners | The owner's mailing address is out of state, or elsewhere in Florida: outside the three counties, or inside them but more than 25 miles from the parcel | The roll's owner mailing address. Its ZIP (else its city, with spellings like "WEST PALM BCH" normalized) is placed at the median point of this dataset's parcels in that ZIP or city, and the distance runs from there to the parcel, so it is approximate. Florida addresses outside the three counties count however close they are (Deerfield Beach, Vero Beach). |
-| Small portfolio owners | The owner name holds 2 to 10 parcels across the three counties, all in one asset class | Owner-name groups (`owner_name_key`), not mailing addresses |
+| Out-of-area owners | The owner's mailing address is out of state, or elsewhere in Florida: outside the six counties, or inside them but more than 25 miles from the parcel | The roll's owner mailing address. Its ZIP (else its city, with spellings like "WEST PALM BCH" normalized) is placed at the median point of this dataset's parcels in that ZIP or city, and the distance runs from there to the parcel, so it is approximate. Florida addresses outside the six counties count however close they are (Sebastian's neighbors in Brevard, the Keys). |
+| Small portfolio owners | The owner name holds 2 to 10 parcels across the six counties, all in one asset class | Owner-name groups (`owner_name_key`), not mailing addresses |
 | Estate / trust owned | The owner name reads as a trust or an estate: TRUST, TRUSTEE, TR, ESTATE OF, HEIRS, REVOCABLE… | The name alone. REITs, banks and trust companies, and real-estate firms are excluded; land trusts are included. |
 
 - Thresholds: `LONG_HOLD_YEARS` and `UNDERBUILT` in web/src/config.ts; `SMALL_PORTFOLIO`, `OUT_OF_AREA_MILES` (or `PA2_OUT_OF_AREA_MILES`) and `MAILING_PLACE_ALIASES` (PO-box towns with no parcels of their own, such as Port Salerno) in pipeline/pa2/config.py. The manifest's `prospecting` block records the pipeline thresholds and flag counts a bundle was built with. The rules run twice, identically: as a MapLibre filter (web/src/map/layers.ts) and over `index.json` for the tables (web/src/results.ts).
 - The Owners table's **Signals** column lists the flags found on each owner's matching parcels (out of state or elsewhere in Florida, estate / trust, small portfolio); sorting it puts owners with the most signals first.
+
+**Starter screens.** Four one-click examples (long-time owners of small apartment buildings, out-of-area owners of retail and office, underbuilt sites held 15+ years, estates and trusts that own apartments) sit on the first-visit card and under *Saved screens*. Each keeps the counties already picked, replaces the other filters and opens the owners list (`STARTER_SCREENS` in web/src/config.ts).
 
 **Saved screens.** *Save this screen* names and stores the filters, presets, search, owner grouping, color and height modes, the table (open, tab, scope) and the map view. Clicking a saved screen puts all of that back; × asks before deleting, and saving under an existing name replaces it.
 Screens live in this browser's localStorage (`pa2.screens.v1`) for now. `ScreenRepository` in web/src/screens.ts is the only storage seam, so a shared backend can replace `LocalScreenRepository` without touching the interface.
@@ -249,7 +259,7 @@ Screens live in this browser's localStorage (`pa2.screens.v1`) for now. `ScreenR
 | Key | Meaning |
 |---|---|
 | `map` | `zoom/lat/lng[/bearing/pitch]` (MapLibre's own) |
-| `co` | counties: `53` Martin, `66` St. Lucie, `60` Palm Beach |
+| `co` | counties: `41` Indian River, `66` St. Lucie, `53` Martin, `60` Palm Beach, `16` Broward, `23` Miami-Dade |
 | `cl` | asset classes, e.g. `MF10,COM` |
 | `hold`, `lot`, `btl` | minimum years held, minimum lot (acres), maximum building / land value |
 | `nom` | `1` counts nominal-value parcels |
@@ -265,7 +275,7 @@ A linked search that no longer matches anything, or now matches more than 10,000
 
 ## Owners & parcels tables
 
-A bar along the bottom of the map opens two tables of the current screen's results: every parcel that matches the filters, screens and search, in all three counties (**All matching**) or only inside the current view (**In map view**). The sidebar's *See matching owners* button opens it too.
+A bar along the bottom of the map opens two tables of the current screen's results: every parcel that matches the filters, screens and search, in all six counties (**All matching**) or only inside the current view (**In map view**). The sidebar's *See matching owners* button opens it too.
 The tables run on `index.json` in the browser and use exactly the map's filter rules (`web/src/results.ts` `matcher` mirrors `web/src/map/layers.ts` `filterExpr`), so a screen covers parcels the map has not loaded yet. Only the rows on screen are drawn, so all 46,733 parcels scroll smoothly.
 
 - **Owners**: one row per owner group, with the grouping set by Top owners' *By name / By address* toggle. **By name** groups the normalized owner name. **By address** groups the normalized mailing address, which shows the sponsor behind single-asset LLCs.
@@ -276,12 +286,12 @@ The tables run on `index.json` in the browser and use exactly the map's filter r
 - **Sorting**: click a column header; click again to reverse.
 - **Linked to the map**: clicking an owner row opens the owner profile and spotlights the group's parcels. Clicking a parcel row flies to the parcel and opens it. Selecting a parcel on the map highlights its row in both tables.
 - **Export CSV** downloads the open table in its current sort, as UTF-8 with a BOM so Excel opens it correctly. Missing values are left blank, never zero. Text that a spreadsheet would run as a formula is escaped.
-  - **Owners columns:** Owner name, Related entities, Matching parcels, Total parcels (all 3 counties), Assessed market value, Building SF, Residential units, Asset classes, Longest hold, Average hold; then Mailing address 1 and 2, city, state and ZIP as separate columns for mail merge; then Other mailing addresses, Out-of-area owner (out of state or elsewhere in Florida), Estate or trust, Small portfolio owner, Largest property and Grouped by.
-  - **Parcels columns:** Parcel ID (county format), County, Site address, City, ZIP, Asset class, Property use, Assessed market value, Nominal-value flag, Building SF, Lot acres and SF, Residential units, Year built, Last sale date and price, Years held, Owner name, the split mailing address plus a one-line version, Out-of-area owner, Estate or trust, Small portfolio owner, Latitude, Longitude, and a Link back to the parcel in the app.
+  - **Owners columns:** Owner name, Related entities, Matching parcels, Total parcels (all counties), Assessed market value, Building SF, Residential units, Asset classes, Longest hold, Average hold; then Mailing address 1 and 2, city, state and ZIP as separate columns for mail merge; then Other mailing addresses, Out-of-area owner (out of state or elsewhere in Florida), Estate or trust, Small portfolio owner, Largest property, Grouped by, Owner type (read from the name) and a Sunbiz lookup link.
+  - **Parcels columns:** Parcel ID (county format), County, Site address, City, ZIP, Asset class, Property use, Assessed market value, Nominal-value flag, Building SF, Lot acres and SF, Residential units, Year built, Last sale date and price, Years held, Owner name, the split mailing address plus a one-line version, Out-of-area owner, Estate or trust, Small portfolio owner, Latitude, Longitude, a Link back to the parcel in the app, Owner type (read from the name) and a Sunbiz lookup link.
 
 ## Owner profiles
 
-Opening an owner (from a table row, Top owners, a parcel's *Owner profile* button or a link) shows everything the group holds in the three counties, whatever the filters:
+Opening an owner (from a table row, Top owners, a parcel's *Owner profile* button or a link) shows everything the group holds in the six counties, whatever the filters:
 - Totals (parcels, assessed market value, building SF, units or lot area) and holds: average of the exact holds (with how many are exact) and the longest hold, as a minimum where it predates the records.
 - **Where they own**: a mini map of the parcels, class-colored.
 - **Asset class mix**: one bar by assessed value, with parcels, value and share per class.
@@ -290,15 +300,24 @@ Opening an owner (from a table row, Top owners, a parcel's *Owner profile* butto
 - **All parcels**: each opens in the property panel on top of the profile, with *Back to <owner>*.
 - The map spotlights the group, and the link (`#…&o=n.<parcel id>`: the owner-name group of that parcel; `a.` for its mailing-address group) reopens the profile. **Export parcels (CSV)** downloads the holdings.
 
-## Top owners in view
+## Sunbiz lookups
 
-The sidebar ranks the owners of the parcels currently on screen, after every filter, by assessed market value: each row shows the owner, parcel count, residential units, value and share of the value in view, with a bar scaled to the leader.
-The footer gives the top five owners' combined share, a quick read on ownership concentration. Pan, zoom or change a filter and the ranking follows (it is computed from the same rendered parcels as the In-view totals).
+Opening a parcel shows a **Look up on Sunbiz** button under the owner, and again in the *Owner & contact* section with the mailing address (one click copies it). The owner profile has the same button, and one per entity in its lists. Both CSV exports end with *Owner type (from name)* and *Sunbiz lookup* columns.
+
+- **What the link does.** It opens the Florida Division of Corporations' own search (search.sunbiz.org) in a new tab, with no referrer. For a company or organization it searches the entity name: Sunbiz lists names alphabetically from the term, so a name the tax roll cut off at 30 characters still lands on the entity. For an individual, and for a trustee named in a trust, it searches *officer / registered agent* by the roll's LAST FIRST name, which lists the companies that person manages. Government owners get no link: they are not registered.
+- **Owner type** (LLC, Corporation, Partnership, Trust or estate, Individual, Government, Organization) is read from the name alone ([web/src/entity.ts](web/src/entity.ts)) and shown as a badge only when the name says so; a cut-off company name gets no badge.
+- **What it is not.** Nothing is copied or scraped from Sunbiz, so the app shows no status, registered agent or officers of its own. The sanctioned source for that is the Division's free bulk data (*Data Downloads → Quarterly Data → Corporate Data*, `cordata.zip`, fixed-width records with status, addresses, registered agent and officers), downloaded from its data portal with the public login the Division posts. Matching those records to owner names is the next step toward contact information.
+
+## Top owners on the map
+
+The sidebar ranks the owners of the parcels in the map view, after every filter, by assessed market value: each row shows the owner, parcel count, residential units, value and share of the value in view, with a bar scaled to the leader.
+The footer gives the top five owners' combined share, a quick read on ownership concentration. Pan, zoom or change a filter and the ranking follows.
+
+- **Totals come from the parcel index**, not from the dots on screen: every parcel inside the map's bounds that passes the screen, exact at any zoom and in step with the table's *In map view*. Until the index has loaded (a few seconds after the map), parcel zooms count the drawn parcels and wider views show "…".
 
 - **By name** groups parcels whose normalized owner names match (`owner_name_key` in the tiles).
 - **By address** groups parcels mailed to the same normalized address (`owner_addr_key`), which often reveals the sponsor behind single-asset LLCs: downtown West Palm Beach puts CityPlace's four entities together (17 parcels, $390M). Rows note how many other owner names share the address, and flag addresses shared by 25+ names as a likely registered agent or manager.
 - Parcels with no portfolio key are their own row (an owner with one parcel). Nominal-value parcels follow the *Count nominal-value parcels* switch.
-- Owner names come from the parcel tiles at zoom 12+; further out they are looked up in the owner index and parcel records, and cached.
 - Clicking a row opens that owner's most valuable parcel in view and spotlights the portfolio on the map.
 
 ## Satellite imagery
@@ -338,7 +357,7 @@ Derived fields (pipeline/pa2/schema.py):
 | `residential_units` | `NO_RES_UNTS` on multifamily and mixed-use (DOR 012) parcels, else null; tiles carry it as `u` |
 | `nominal_value` | `JV` below `--nominal-value-max` (parquet only; the frontend compares `jv` with the manifest's `data_quality.nominal_value_max`) |
 | `last_sale_qualified` | `true` for FDOR code 01 or a Palm Beach `Q*` validity code, `false` for 11+ or `D*` / `U*`, otherwise null (raw code kept) |
-| `out_of_area` | `2` when the owner's mailing state is not FL. `1` when it is FL and the mailing ZIP (else city) has no parcels in this dataset (outside the three counties), or its parcels' median point is more than `OUT_OF_AREA_MILES` (25) from the parcel. Unknown with no ZIP or city. Tiles and index carry it as `oa` (pipeline/pa2/publish.py `prospect_flags`) |
+| `out_of_area` | `2` when the owner's mailing state is not FL. `1` when it is FL and the mailing ZIP (else city) has no parcels in this dataset (outside the six counties), or its parcels' median point is more than `OUT_OF_AREA_MILES` (25) from the parcel. Unknown with no ZIP or city. Tiles and index carry it as `oa` (pipeline/pa2/publish.py `prospect_flags`) |
 | `small_portfolio` | `1` when the parcel's owner-name group has 2–10 parcels, all in one asset class (`spf`) |
 | `estate_trust` | `1` when the owner name reads as a trust or an estate (`estate_trust` in pipeline/pa2/publish.py; `et`) |
 | `tot_lvg_area` | `TOT_LVG_AR`; values under 10 SF are treated as not reported. The 2026 roll carries `1` on ~7k improved office, warehouse and retail parcels. |
@@ -347,7 +366,7 @@ Other asset classes appear when their codes are fetched: Single Family 001, Cond
 
 **Owner resolution** (pipeline/pa2/entity.py). Names are uppercased, punctuation is stripped, and entity suffixes are unified (`L.L.C.`/`Limited Liability Company` → `LLC`, `Trustee` → `TR`, …).
 Mailing addresses are standardized: `SUITE`/`STE`/`#` → `#`, directionals and street types abbreviated, `P.O. Box` → `PO BOX`, `C/O` lines skipped, ZIP5.
-Groups of 2+ parcels get integer keys stored in the tiles, so a click highlights the whole portfolio across all three counties.
+Groups of 2+ parcels get integer keys stored in the tiles, so a click highlights the whole portfolio across all six counties.
 An address shared by 25+ distinct owner names is flagged as a likely manager or registered-agent address.
 Swap in Sunbiz officer/agent matching or fuzzy matching here later.
 
@@ -369,6 +388,7 @@ This creates `pa2_parcels` (indexed), the view `pa2_owner_portfolios` and the fu
 - Sale history: see *Sales history and hold periods*. Palm Beach's CAMA file keeps five transfers per parcel, so a parcel with five nominal transfers in a row keeps a minimum hold rather than its last priced sale.
 - Last-sale prices are as recorded: a deed covering several parcels may carry the whole package's price on each of them.
 - Condo units (004) and individual mobile homes (002) are excluded by default; see the opt-in flags.
-- Not yet included: comps and fuzzy/Sunbiz entity matching. Search matches word beginnings, not misspellings.
+- Not yet included: comps, and entity details from Sunbiz's bulk data (the app links to Sunbiz instead; see *Sunbiz lookups*). Search matches word beginnings, not misspellings.
+- Wide views are heavy: at zoom 8 the map draws every parcel as a dot, and the tile that holds Miami and Fort Lauderdale is about 2.4 MB. Thinning the low-zoom tiles (with exact matches drawn from the index) is the next step if coverage grows.
 - Saved screens stay in the browser that saved them until a backend replaces `LocalScreenRepository`; share a screen with its link.
 - Prospecting flags read names and mailing addresses as the roll publishes them: a trust owned through an LLC is not flagged, and a local owner who mails tax bills to an out-of-state office is.

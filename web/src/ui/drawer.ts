@@ -1,10 +1,11 @@
 import { CLASS_BADGE, CLASS_COLORS, CLASS_FALLBACK, CLASS_SHORT, COUNTY_META } from '../config';
-import { appendAll, clear, h, icon, type Child } from '../dom';
+import { appendAll, clear, copyButton, h, icon, type Child } from '../dom';
 import { acres, int, money, moneyFull, parcelId, pct, saleDate, sqft, titleCase } from '../format';
 import type { Manifest, ParcelRecord, Portfolio, PortfolioItem, TileProps } from '../types';
 import type { AerialCard } from './aerial';
 import {
   INFO,
+  area,
   holdInfo,
   isNominal,
   parentSite,
@@ -18,6 +19,7 @@ import {
   type Fact,
 } from './facts';
 import { infoTip } from './infotip';
+import { entityBadge, lookupRow } from './lookups';
 
 /** Asset-class badge: the class color carries identity, the label repeats it in text. */
 const classBadge = (cls: string) =>
@@ -236,6 +238,7 @@ export class Drawer {
               r.owner_name || 'Owner not reported',
             ),
             portfolio ? h('span', { class: 'kf-sub' }, `Portfolio of ${portfolio.exact ? '' : '≥ '}${int(portfolio.total)} parcels (below)`) : null,
+            lookupRow(r.owner_name, r.county_code, true),
           ),
         ),
       ),
@@ -258,7 +261,9 @@ export class Drawer {
           factGrid(sales),
           coverage?.from
             ? h('p', { class: 'cap' }, `${county?.name ?? 'County'} sale records are complete from ${coverage.from}.`)
-            : null,
+            : coverage?.depth === 'latest'
+              ? h('p', { class: 'cap' }, `${county?.name ?? 'This county'} publishes each parcel’s latest transfer only, so an earlier sale behind a nominal transfer is not on record here.`)
+              : null,
         ),
         this.ownerSection(r, portfolio, focus),
         this.moreDetails(r),
@@ -301,8 +306,20 @@ export class Drawer {
 
   private ownerSection(r: ParcelRecord, portfolio: Portfolio | null | undefined, focus: boolean): HTMLElement {
     const block: Child[] = [
-      h('div', { class: 'owner-line' }, h('span', { class: 'owner-name-static' }, r.owner_name || 'Owner not reported')),
-      h('div', { class: 'owner-addr' }, r.owner_addr || 'No mailing address on record'),
+      h('div', { class: 'owner-line' }, h('span', { class: 'owner-name-static' }, r.owner_name || 'Owner not reported'), entityBadge(r.owner_name)),
+      h(
+        'div',
+        { class: 'owner-addr' },
+        h('span', { class: 'owner-addr-k' }, 'Mails to'),
+        h('span', null, r.owner_addr || 'No mailing address on record'),
+        r.owner_addr ? copyButton(r.owner_addr, 'mailing address') : null,
+      ),
+      lookupRow(r.owner_name, r.county_code),
+      h(
+        'p',
+        { class: 'cap' },
+        'Phone and email are not on the tax roll. For a company, Sunbiz lists the registered agent and the managers or officers, with their addresses.',
+      ),
       h(
         'button',
         { type: 'button', class: 'btn solid sm op-open', onclick: () => this.handlers.onOwnerProfile() },
@@ -313,17 +330,17 @@ export class Drawer {
     if (portfolio === undefined) {
       block.push(h('div', { class: 'dr-loading sm' }, h('span', { class: 'spinner' }), 'Finding other parcels with this owner'));
     } else if (portfolio === null) {
-      block.push(h('p', { class: 'cap' }, 'No other parcel in the three counties shares this owner name or mailing address.'));
+      block.push(h('p', { class: 'cap' }, `No other parcel in ${area(this.manifest).the} shares this owner name or mailing address.`));
     } else {
       block.push(this.portfolioBlock(r, portfolio, focus));
     }
     const title = h(
       'h3',
       null,
-      'Owner & portfolio',
+      'Owner & contact',
       infoTip(
-        'owner and portfolio',
-        'Other parcels in Martin, St. Lucie and Palm Beach with the same owner name or the same normalized mailing address. Shared addresses can belong to a manager or registered agent rather than one owner.',
+        'owner and contact',
+        `Other parcels in ${area(this.manifest).the} with the same owner name or the same normalized mailing address. Shared addresses can belong to a manager or registered agent rather than one owner.`,
       ),
     );
     return h('section', { class: 'dr-sec' }, title, ...block);

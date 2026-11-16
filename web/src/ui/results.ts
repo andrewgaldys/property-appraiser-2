@@ -21,7 +21,7 @@ import {
 } from '../results';
 import { loadUi, saveUi, type Store } from '../state';
 import type { AppState, Bbox, Manifest, OwnerRef } from '../types';
-import { prospectingRules } from './facts';
+import { area, prospectingRules } from './facts';
 import { VirtualTable, type Column } from './table';
 
 export interface ResultsHandlers {
@@ -33,6 +33,8 @@ export interface ResultsHandlers {
   viewBbox(): Bbox;
   /** Open / tab / scope changed (the page link records them). */
   onStateChange(): void;
+  /** How many owners and parcels the whole screen matches (every county); null while unknown. */
+  onCounts?(n: { owners: number; parcels: number } | null): void;
 }
 
 type Tab = 'owners' | 'parcels';
@@ -44,7 +46,7 @@ const BAR = 46;
 
 /**
  * Owners & parcels: the screen's results as tables under the map. They cover every parcel that
- * matches the active filters and search in all three counties (or only the map view), grouped
+ * matches the active filters and search in every county (or only the map view), grouped
  * into owners the same way as Top owners. Rows open an owner profile or a parcel; the map's
  * selection highlights the matching row; either table exports to CSV.
  */
@@ -103,7 +105,7 @@ export class ResultsPanel {
     const scopeBtn = (s: Scope, label: string, title: string) =>
       h('button', { type: 'button', class: 'seg-btn', role: 'radio', title, onclick: () => this.setScope(s) }, label);
     this.scopeButtons = {
-      all: scopeBtn('all', 'All matching', 'Every matching parcel in the three counties'),
+      all: scopeBtn('all', 'All matching', `Every matching parcel in ${area(this.manifest).the}`),
       view: scopeBtn('view', 'In map view', 'Only matching parcels inside the current map view'),
     };
     this.summary = h('span', { class: 'rs-summary' });
@@ -174,7 +176,16 @@ export class ResultsPanel {
     if (open) this.ensureIndex();
     this.handlers.onLayout(this.height());
     if (open) this.schedule();
+    else this.release();
     this.handlers.onStateChange();
+  }
+
+  /** Closed, the bar only shows counts: let go of the tables (over 100,000 owner rows for the whole coast). */
+  private release(): void {
+    this.owners = [];
+    this.related.clear();
+    this.ownersTable.setRows([]);
+    this.parcelsTable.setRows([]);
   }
 
   /** The panel's height over the map: mirrors .results / .results.open in app.css. */
@@ -221,7 +232,11 @@ export class ResultsPanel {
   private ensureIndex(): void {
     if (this.ix || this.loading) return;
     this.loading = true;
-    this.summary.textContent = 'Loading every parcel…';
+    const total = int(this.manifest.stats.parcels);
+    this.summary.textContent = `Loading ${total} parcels…`;
+    const stop = this.data.onIndexProgress((f) => {
+      if (!this.ix) this.summary.textContent = f < 0.97 ? `Loading ${total} parcels… ${Math.round(f * 100)}%` : `Preparing ${total} parcels…`;
+    });
     this.data
       .parcelIndex()
       .then((ix) => {
@@ -234,8 +249,14 @@ export class ResultsPanel {
         this.summary.textContent = 'Could not load the parcel table. Try reloading.';
       })
       .finally(() => {
+        stop();
         this.loading = false;
       });
+  }
+
+  /** Load the parcel table before the first click, so the match counts are already there. */
+  preload(): void {
+    this.ensureIndex();
   }
 
   private schedule(): void {
@@ -253,14 +274,25 @@ export class ResultsPanel {
     const s = this.store.get();
     const match = matcher(s.filters, s.search, nominalMax(this.manifest), this.scope === 'view' ? this.handlers.viewBbox() : null);
     this.parcels = ix.rows.filter(match);
-    this.owners = ownerResults(ix, this.parcels, s.ownerGroup);
-    this.related.clear();
-    this.ownersTable.setRows(this.owners);
-    this.parcelsTable.setRows(this.parcels);
-    this.tabButtons.owners.querySelector('.rs-n')!.textContent = int(this.owners.length);
+    let ownerCount: number;
+    if (this.open) {
+      this.owners = ownerResults(ix, this.parcels, s.ownerGroup);
+      this.related.clear();
+      this.ownersTable.setRows(this.owners);
+      this.parcelsTable.setRows(this.parcels);
+      ownerCount = this.owners.length;
+    } else {
+      // Closed: count the owner groups without building their rows (the tables fill when it opens).
+      const keys = new Set<string>();
+      for (const r of this.parcels) keys.add(refKey(ownerRefOf(r, s.ownerGroup, ix)));
+      ownerCount = keys.size;
+    }
+    this.tabButtons.owners.querySelector('.rs-n')!.textContent = int(ownerCount);
     this.tabButtons.parcels.querySelector('.rs-n')!.textContent = int(this.parcels.length);
     const jv = this.parcels.reduce((a, r) => a + (r.jv ?? 0), 0);
-    this.summary.textContent = `${money(jv)} assessed · ${this.scope === 'view' ? 'in map view' : 'all three counties'}${s.ownerGroup === 'addr' ? ' · owners by mailing address' : ''}`;
+    this.summary.textContent = `${money(jv)} assessed · ${this.scope === 'view' ? 'in map view' : area(this.manifest).all}${s.ownerGroup === 'addr' ? ' · owners by mailing address' : ''}`;
+    // The sidebar's count is for the whole screen, so it only speaks when the table shows all matches.
+    this.handlers.onCounts?.(this.scope === 'all' ? { owners: ownerCount, parcels: this.parcels.length } : null);
     this.syncActive(false);
   }
 
@@ -287,12 +319,13 @@ export class ResultsPanel {
     const ix = this.ix;
     if (!ix) return;
     const s = this.store.get();
+    // Closed, the tables are empty (see release): export the same rows in the default order, by value.
     if (this.tab === 'owners') {
-      const rows = this.ownersTable.sorted();
+      const rows = this.open ? this.ownersTable.sorted() : ownerResults(ix, this.parcels, s.ownerGroup).sort((a, b) => b.jv - a.jv);
       download(`pa2-owners-${stamp()}.csv`, ownersCsv(ix, rows, s.ownerGroup));
       toast(`Exported ${int(rows.length)} ${rows.length === 1 ? 'owner' : 'owners'}`);
     } else {
-      const rows = this.parcelsTable.sorted();
+      const rows = this.open ? this.parcelsTable.sorted() : [...this.parcels].sort((a, b) => (b.jv ?? 0) - (a.jv ?? 0));
       const base = `${window.location.origin}${window.location.pathname}`;
       download(
         `pa2-parcels-${stamp()}.csv`,
@@ -325,7 +358,7 @@ export class ResultsPanel {
       },
       {
         id: 'parcels', label: 'Parcels', width: 92, align: 'right', sort: (a, b) => a.rows.length - b.rows.length || a.total - b.total,
-        info: 'Parcels matching the screen, of all the parcels this owner group holds in the three counties.',
+        info: `Parcels matching the screen, of all the parcels this owner group holds in ${area(this.manifest).the}.`,
         cell: (g) => h('span', { class: 'rs-two r' }, h('span', { class: 'rs-num' }, int(g.rows.length)), g.total > g.rows.length ? h('span', { class: 'rs-sub' }, `of ${int(g.total)}`) : null),
       },
       { id: 'jv', label: 'Assessed value', width: 122, align: 'right', sort: (a, b) => a.jv - b.jv, cell: (g) => h('span', { class: 'rs-num' }, money(g.jv)) },
@@ -342,7 +375,7 @@ export class ResultsPanel {
         id: 'signals', label: 'Signals', width: 170,
         sort: (a, b) => signalRank(a) - signalRank(b),
         desc: true,
-        info: `Prospecting signals on the matching parcels: the owner mails from out of state or elsewhere in Florida (outside the three counties, or more than ${rules.miles} miles away), the owner name reads as a trust or estate, or the owner is a small portfolio owner (${rules.small[0]}–${rules.small[1]} parcels in one asset class).`,
+        info: `Prospecting signals on the matching parcels: the owner mails from out of state or elsewhere in Florida (outside ${area(this.manifest).the}, or more than ${rules.miles} miles away), the owner name reads as a trust or estate, or the owner is a small portfolio owner (${rules.small[0]}–${rules.small[1]} parcels in one asset class).`,
         cell: (g) => h('span', { class: 'rs-clip rs-signals' }, signalText(g) || '—'),
         title: (g) => signalText(g) || undefined,
       },

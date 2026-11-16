@@ -1,4 +1,4 @@
-import { COUNTY_META, MIXED_USE_CODE, RESIDENTIAL_CLASSES, UNDERBUILT } from '../config';
+import { COUNTY_META, COUNTY_ORDER, MIXED_USE_CODE, RESIDENTIAL_CLASSES, UNDERBUILT } from '../config';
 import { int, money, moneyFull, psf, ratio, saleDate, signedPct, titleCase, yearBuilt } from '../format';
 import { nominalMax } from '../map/layers';
 import type { Manifest, ParcelRecord, Portfolio, PortfolioItem, TileProps } from '../types';
@@ -135,23 +135,50 @@ export function holdShort(p: TileProps): string {
   return 'sale not on record';
 }
 
-const COVERAGE_ORDER = [60, 66, 53];
+const NUMBER_WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
+const listOf = (items: string[]): string =>
+  items.length > 1 ? `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}` : items[0] ?? '';
+
+/** Counties in this bundle, north to south. */
+export function countyCodes(m: Manifest): number[] {
+  const have = new Set(m.counties.map((c) => c.code));
+  return [...COUNTY_ORDER.filter((c) => have.has(c)), ...m.counties.map((c) => c.code).filter((c) => !COUNTY_ORDER.includes(c))];
+}
+
+/** How to name the coverage area in sentences: "the six counties", "all six counties", "Indian River to Miami-Dade". */
+export function area(m: Manifest): { n: number; the: string; all: string; names: string; span: string } {
+  const names = countyCodes(m).map((c) => COUNTY_META[c]?.name ?? String(c));
+  const n = names.length;
+  const word = NUMBER_WORDS[n] ?? String(n);
+  if (n <= 1) {
+    const one = `${names[0] ?? 'the'} County`;
+    return { n, the: one, all: one, names: one, span: one };
+  }
+  return { n, the: `the ${word} counties`, all: `all ${word} counties`, names: listOf(names), span: `${names[0]} to ${names[n - 1]}` };
+}
 
 /** Prospecting thresholds the data was built with (defaults for bundles that predate them). */
 export function prospectingRules(m: Manifest): { miles: number; small: [number, number] } {
   return { miles: m.prospecting?.out_of_area_miles ?? 25, small: m.prospecting?.small_portfolio ?? [2, 10] };
 }
 
-/** "Sales on record from 1969 (Palm Beach), 1972 (St. Lucie) and 1977 (Martin)." or null without coverage info. */
+/**
+ * "Sale records start in 1968 (Broward), 1969 (Palm Beach) … Indian River and Miami-Dade list each
+ * parcel's latest transfer only." Null without coverage info.
+ */
 export function coverageLine(m: Manifest): string | null {
   const cov = m.sales_coverage;
   if (!cov) return null;
-  const parts = COVERAGE_ORDER.filter((c) => cov[String(c)]?.from).map(
-    (c) => `${cov[String(c)]!.from} (${COUNTY_META[c]?.name ?? c})`,
-  );
-  if (!parts.length) return null;
-  const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0];
-  return `Sales on record from ${list}.`;
+  const codes = countyCodes(m).filter((c) => cov[String(c)]);
+  const name = (c: number) => COUNTY_META[c]?.name ?? String(c);
+  const dated = codes.filter((c) => cov[String(c)]!.from).sort((a, b) => cov[String(a)]!.from! - cov[String(b)]!.from!);
+  const latest = codes.filter((c) => !cov[String(c)]!.from && cov[String(c)]!.depth === 'latest');
+  const windowOnly = codes.filter((c) => !cov[String(c)]!.from && cov[String(c)]!.depth === 'window');
+  const out: string[] = [];
+  if (dated.length) out.push(`Sale records start in ${listOf(dated.map((c) => `${cov[String(c)]!.from} (${name(c)})`))}.`);
+  if (latest.length) out.push(`${listOf(latest.map(name))} ${latest.length > 1 ? 'list' : 'lists'} each parcel’s latest transfer only.`);
+  if (windowOnly.length) out.push(`${listOf(windowOnly.map(name))}: only ${m.source.as_of_year - 1}–${String(m.source.as_of_year).slice(2)} sales are on record.`);
+  return out.length ? out.join(' ') : null;
 }
 
 /** "49+ yrs": the shortest hold that can show as a minimum (the latest county coverage start). */
@@ -164,7 +191,7 @@ export function coverageExample(m: Manifest): string {
 export function coverageDetail(m: Manifest): string {
   const minPrice = money(m.data_quality?.min_sale_price ?? 100);
   const cov = m.sales_coverage ?? {};
-  const lines = COVERAGE_ORDER.filter((c) => cov[String(c)]).map((c) => {
+  const lines = countyCodes(m).filter((c) => cov[String(c)]).map((c) => {
     const k = cov[String(c)]!;
     const name = COUNTY_META[c]?.name ?? String(c);
     const depth =
@@ -173,7 +200,7 @@ export function coverageDetail(m: Manifest): string {
   });
   return [
     `Years since the last sale of ${minPrice} or more. Smaller transfers (often $10 deeds between related owners) are not sales.`,
-    lines.join(' '),
+    lines.join('\n'),
     `A hold that reaches back past a county’s records shows as a minimum, like “${coverageExample(m)}”, and passes this screen when that minimum is long enough. So does a parcel with only nominal transfers since some year. A parcel with no sale on record never passes.`,
   ].join('\n\n');
 }

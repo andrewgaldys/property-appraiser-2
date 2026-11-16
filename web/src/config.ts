@@ -4,12 +4,15 @@ export const APP_NAME = 'Property Appraiser 2.0';
 export const APP_VERSION = 'V0.1';
 
 export const COUNTY_META: Record<number, { name: string; short: string; badge: string }> = {
-  53: { name: 'Martin', short: 'MAR', badge: 'Martin County' },
+  41: { name: 'Indian River', short: 'IRC', badge: 'Indian River County' },
   66: { name: 'St. Lucie', short: 'SLC', badge: 'St. Lucie County' },
+  53: { name: 'Martin', short: 'MAR', badge: 'Martin County' },
   60: { name: 'Palm Beach', short: 'PBC', badge: 'Palm Beach County' },
+  16: { name: 'Broward', short: 'BRO', badge: 'Broward County' },
+  23: { name: 'Miami-Dade', short: 'MDC', badge: 'Miami-Dade County' },
 };
-/** Toggle order requested for the filter bar. */
-export const COUNTY_ORDER = [53, 66, 60];
+/** North to south along the coast: the order every county list uses. */
+export const COUNTY_ORDER = [41, 66, 53, 60, 16, 23];
 
 export const CLASS_SHORT: Record<string, string> = {
   MF10: 'Multifamily 10+',
@@ -76,6 +79,17 @@ export const PRESETS: { id: PresetId; label: string; chip: string }[] = [
   { id: 'trust', label: 'Estate / trust owned', chip: 'Estate / trust' },
 ];
 export const PRESET_IDS = PRESETS.map((p) => p.id);
+
+/**
+ * Starter screens: one-click examples of a real prospecting list (the welcome card and the Saved
+ * screens section offer them). They keep the counties already picked and replace everything else.
+ */
+export const STARTER_SCREENS: { id: string; label: string; filters: Partial<Filters> }[] = [
+  { id: 'small-mf-long', label: 'Long-time owners of small apartment buildings', filters: { classes: ['MF2_9'], presets: ['long'] } },
+  { id: 'retail-out', label: 'Out-of-area owners of retail and office', filters: { classes: ['COM'], presets: ['outside'] } },
+  { id: 'underbuilt-long', label: 'Underbuilt sites held 15+ years', filters: { presets: ['underbuilt', 'long'] } },
+  { id: 'trust-mf', label: 'Estates and trusts that own apartments', filters: { classes: ['MF10', 'MF2_9'], presets: ['trust'] } },
+];
 
 export const EXTRUDE_MODES: { id: ExtrudeMode; label: string; legend: string }[] = [
   { id: 'flat', label: 'Flat', legend: 'Flat' },

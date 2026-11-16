@@ -1,9 +1,10 @@
-import { LONG_HOLD_YEARS, PRESETS, UNDERBUILT } from '../config';
+import { LONG_HOLD_YEARS, PRESETS, STARTER_SCREENS, UNDERBUILT } from '../config';
 import { clear, h, icon, toast } from '../dom';
 import { describeScreen, type SavedScreen, type ScreenRepository, type ScreenState } from '../screens';
 import { loadUi, saveUi, type Store } from '../state';
 import type { AppState, Manifest, PresetId } from '../types';
-import { coverageLine, prospectingRules } from './facts';
+import { area, coverageLine, prospectingRules } from './facts';
+import { stepTag } from './filters';
 import { infoTip } from './infotip';
 
 export interface ProspectingHandlers {
@@ -11,6 +12,8 @@ export interface ProspectingHandlers {
   capture(): ScreenState;
   apply(state: ScreenState): void;
   copyLink(): void;
+  /** Run one of the starter screens (config STARTER_SCREENS). */
+  starter(id: string): void;
 }
 
 /** What each preset does, in plain language (the exact rules: map/layers.ts filterExpr). */
@@ -18,13 +21,17 @@ function presetInfo(id: PresetId, m: Manifest): string {
   const year = m.source.as_of_year - LONG_HOLD_YEARS;
   switch (id) {
     case 'long':
-      return `Last sale of $100 or more ${LONG_HOLD_YEARS} or more years ago (${year} or earlier), or no priced sale on record since at least then. ${coverageLine(m) ?? ''}\n\nParcels with no sale on record are left out: their hold is unknown, not long.`;
+      return `Last sale of $100 or more ${LONG_HOLD_YEARS} or more years ago (${year} or earlier), or no priced sale on record since at least then. ${coverageLine(m) ?? ''}\n\nParcels with no sale on record are left out: their hold is unknown, not long.${
+        Object.values(m.sales_coverage ?? {}).some((c) => c.depth === 'latest')
+          ? ' Where a county lists only the latest transfer, a recent nominal one (a deed into an LLC, say) hides the earlier sale, so some long-time owners there are missed.'
+          : ''
+      }`;
     case 'underbuilt':
       return `Buildings worth at most ${Math.round(UNDERBUILT.maxBtl * 100)}% of the land (building-to-land value ${UNDERBUILT.maxBtl}× or less) on a lot of ${UNDERBUILT.minLotAc} acre or more. Vacant land counts; nominal-value parcels don't. Add an asset class to narrow it.`;
     case 'outside':
-      return `The tax bill goes out of state, or elsewhere in Florida: outside Martin, St. Lucie and Palm Beach, or inside them but more than ${prospectingRules(m).miles} miles from the parcel.\n\nThe distance runs from the middle of the owner’s mailing ZIP code (placed using this dataset’s own parcels) to the parcel, so it is approximate. Owners just past the outer county lines (Deerfield Beach, Vero Beach, Okeechobee) count however close they are.`;
+      return `The tax bill goes out of state, or elsewhere in Florida: outside ${area(m).the} covered here, or inside them but more than ${prospectingRules(m).miles} miles from the parcel.\n\nThe distance runs from the middle of the owner’s mailing ZIP code (placed using this dataset’s own parcels) to the parcel, so it is approximate. Owners just past the outer county lines count however close they are.`;
     case 'small':
-      return `The owner name holds ${prospectingRules(m).small[0]} to ${prospectingRules(m).small[1]} parcels across the three counties, all in one asset class (grouped by owner name, not mailing address).`;
+      return `The owner name holds ${prospectingRules(m).small[0]} to ${prospectingRules(m).small[1]} parcels across ${area(m).the}, all in one asset class (grouped by owner name, not mailing address).`;
     case 'trust':
       return 'The owner name reads as a trust or an estate: TRUST, TRUSTEE, TR, ESTATE OF and the like. Land trusts count; REITs, banks and real-estate companies do not.';
   }
@@ -33,13 +40,18 @@ function presetInfo(id: PresetId, m: Manifest): string {
 const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
 /**
- * Prospecting: preset screens a broker would actually run (combinable with each other and every
- * other filter) and named saved screens. Saved screens live in this browser for now; the
- * repository interface is where a shared backend would plug in.
+ * Owner signals: preset screens a broker would actually run (combinable with each other and every
+ * other filter), and, in a section of its own, named saved screens plus the starter screens. Saved
+ * screens live in this browser for now; the repository interface is where a shared backend would
+ * plug in.
  */
 export class ProspectingPanel {
+  /** Step 3 of the sidebar's flow: the owner signals. */
   readonly el: HTMLDetailsElement;
+  /** Saved and starter screens. */
+  readonly savedEl: HTMLDetailsElement;
   private sum: HTMLElement;
+  private savedSum: HTMLElement;
   private toggles = new Map<PresetId, HTMLInputElement>();
   private list: HTMLElement;
   private form: HTMLElement;
@@ -88,17 +100,40 @@ export class ProspectingPanel {
         h('button', { type: 'button', class: 'btn ghost sm', onclick: () => this.showForm(false) }, 'Cancel'),
       ),
     );
-    const open = loadUi({ sections: { prospecting: true } as Record<string, boolean> }).sections.prospecting !== false;
+    const stored = loadUi({ sections: {} as Record<string, boolean> }).sections;
+    const remember = (el: HTMLDetailsElement, id: string) =>
+      el.addEventListener('toggle', () => {
+        const cur = loadUi({ sections: {} as Record<string, boolean> }).sections;
+        saveUi({ sections: { ...cur, [id]: el.open } });
+      });
     this.el = h(
       'details',
       { class: 'sec prospecting', 'data-sec': 'prospecting' },
-      h('summary', null, h('span', { class: 'sec-title' }, 'Prospecting'), this.sum, icon('chevron', 16)),
+      h('summary', null, stepTag(3), h('span', { class: 'sec-title' }, 'Owner signals'), this.sum, icon('chevron', 16)),
       h(
         'div',
         { class: 'sec-body' },
-        h('p', { class: 'cap pre-cap' }, 'Turn on any mix; they combine with every other filter.'),
+        h('p', { class: 'cap pre-cap' }, 'Signs an owner may be ready to talk. Turn on any mix: a parcel must match them all.'),
         presets,
-        h('div', { class: 'saved-head' }, h('h4', null, 'Saved screens'), infoTip('saved screens', 'A saved screen keeps the filters, prospecting presets, search, owner grouping, table and map view. Saved in this browser only for now; use Copy link to share a screen with someone else.')),
+      ),
+    ) as HTMLDetailsElement;
+    this.el.open = stored.prospecting !== false;
+    remember(this.el, 'prospecting');
+
+    this.savedSum = h('span', { class: 'sec-sum' });
+    this.savedEl = h(
+      'details',
+      { class: 'sec saved-sec', 'data-sec': 'saved' },
+      h('summary', null, h('span', { class: 'sec-title' }, 'Saved screens'), this.savedSum, icon('chevron', 16)),
+      h(
+        'div',
+        { class: 'sec-body' },
+        h(
+          'p',
+          { class: 'cap pre-cap' },
+          'A screen is everything you have set: filters, signals, search, the list and the map view.',
+          infoTip('saved screens', 'Saved in this browser only for now. Use Copy link to send a screen to someone else: the link reopens it exactly.'),
+        ),
         this.list,
         this.form,
         h(
@@ -107,13 +142,27 @@ export class ProspectingPanel {
           h('button', { type: 'button', class: 'btn ghost sm', onclick: () => this.showForm(true) }, icon('save', 14), 'Save this screen'),
           h('button', { type: 'button', class: 'btn ghost sm', onclick: () => this.handlers.copyLink() }, icon('link', 14), 'Copy link'),
         ),
+        h('div', { class: 'field-label starters-label' }, 'Or start from an example'),
+        h(
+          'ul',
+          { class: 'saved starters' },
+          STARTER_SCREENS.map((sc) =>
+            h(
+              'li',
+              { class: 'saved-item' },
+              h(
+                'button',
+                { type: 'button', class: 'saved-open', title: 'Run this example', onclick: () => this.handlers.starter(sc.id) },
+                h('span', { class: 'saved-name' }, sc.label),
+              ),
+              icon('arrow', 13),
+            ),
+          ),
+        ),
       ),
     ) as HTMLDetailsElement;
-    this.el.open = open;
-    this.el.addEventListener('toggle', () => {
-      const cur = loadUi({ sections: {} as Record<string, boolean> }).sections;
-      saveUi({ sections: { ...cur, prospecting: this.el.open } });
-    });
+    this.savedEl.open = stored.saved !== false;
+    remember(this.savedEl, 'saved');
     this.sync(store.get());
     store.subscribe((s, prev) => {
       if (s.filters !== prev.filters) this.sync(s);
@@ -130,8 +179,9 @@ export class ProspectingPanel {
   private sync(s: AppState): void {
     for (const [id, input] of this.toggles) input.checked = s.filters.presets.includes(id);
     const n = s.filters.presets.length;
-    this.sum.textContent = n ? `${n} on` : this.screens.length ? `${this.screens.length} saved` : '';
+    this.sum.textContent = n ? `${n} on` : 'None';
     this.sum.classList.toggle('on', n > 0);
+    this.savedSum.textContent = this.screens.length ? `${this.screens.length} saved` : '';
   }
 
   private async refresh(): Promise<void> {
@@ -147,7 +197,7 @@ export class ProspectingPanel {
   private renderList(): void {
     clear(this.list);
     if (!this.screens.length) {
-      this.list.append(h('li', { class: 'saved-empty' }, 'None yet. Set up a screen, then save it here.'));
+      this.list.append(h('li', { class: 'saved-empty' }, 'Nothing saved yet.'));
       return;
     }
     for (const sc of this.screens) {

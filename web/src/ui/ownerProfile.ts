@@ -1,6 +1,6 @@
 import { Map as MapLibreMap, type GeoJSONSource, type LngLatBoundsLike } from 'maplibre-gl';
 import { CLASS_BADGE, CLASS_COLORS, CLASS_FALLBACK, CLASS_SHORT, COUNTY_META } from '../config';
-import { appendAll, clear, h, icon, toast, type Child } from '../dom';
+import { appendAll, clear, copyButton, h, icon, toast, type Child } from '../dom';
 import { acres, int, money, pct, saleDate, titleCase } from '../format';
 import { buildBasemapStyle } from '../map/basemap';
 import { nominalMax } from '../map/layers';
@@ -9,6 +9,7 @@ import { download, groupMembers, holdText, ownerRefOf, parcelsCsv, refKey, relat
 import { rowsBbox } from '../search';
 import type { Manifest, OwnerRef } from '../types';
 import { infoTip } from './infotip';
+import { entityBadge, lookupIcon, lookupRow } from './lookups';
 
 export interface ProfileHandlers {
   onClose(): void;
@@ -87,7 +88,7 @@ class MiniMap {
 }
 
 /**
- * An owner group's profile: everything it holds in the three counties, a mini map, the asset
+ * An owner group's profile: everything it holds in the coverage area, a mini map, the asset
  * class mix, an acquisition timeline (last priced sale of each parcel, where on record), average
  * hold and the related entities. Parcels open in the property panel on top of it.
  */
@@ -183,6 +184,7 @@ export class OwnerProfile {
           'div',
           { class: 'dr-badges' },
           h('span', { class: 'badge' }, kind),
+          ref.kind !== 'a' ? entityBadge(this.label) : null,
           ref.kind !== 'p'
             ? infoTip(
                 'owner grouping',
@@ -194,6 +196,7 @@ export class OwnerProfile {
         ),
         h('h2', { class: 'dr-addr' }, this.label || 'Owner not reported'),
         h('div', { class: 'dr-city' }, [counties, ref.kind === 'a' && names.size > 1 ? `${int(names.size)} owner names` : null].filter(Boolean).join(' · ')),
+        ref.kind !== 'a' || names.size === 1 ? lookupRow(this.label, rows[0]?.co) : null,
       ),
       h(
         'dl',
@@ -421,6 +424,7 @@ export class OwnerProfile {
             null,
             h('button', { type: 'button', class: 'op-ent-name', title: 'Open this owner', onclick: () => openName(e.name, e.oak) }, e.name),
             h('span', { class: 'op-ent-n' }, `${int(e.parcels)} ${e.parcels === 1 ? 'parcel' : 'parcels'}`),
+            lookupIcon(e.name, ix.rows.find((r) => r.own === e.name)?.co),
           ),
         ),
       );
@@ -462,6 +466,7 @@ export class OwnerProfile {
                 ? h('button', { type: 'button', class: 'op-ent-name', title: 'Everything mailed to this address', onclick: () => this.handlers.onOpenOwner({ kind: 'a', id: m.row.oak! }) }, line || '—')
                 : h('span', { class: 'op-ent-text' }, line || '—'),
               h('span', { class: 'op-ent-n' }, `${int(m.n)} ${m.n === 1 ? 'parcel' : 'parcels'}`),
+              line ? copyButton(line, 'mailing address') : null,
             ),
           ),
       ),

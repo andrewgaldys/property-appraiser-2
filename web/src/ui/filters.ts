@@ -1,41 +1,44 @@
 import {
   APP_NAME,
-  APP_VERSION,
   BTL_STEPS,
   CLASS_COLORS,
   CLASS_FALLBACK,
   CLASS_SHORT,
   COUNTY_META,
-  COUNTY_ORDER,
   DEFAULT_FILTERS,
   EXTRUDE_MODES,
   HOLD_MAX,
   LOT_STEPS_AC,
   SHADE_MODES,
 } from '../config';
-import { appendAll, h, icon, type Child } from '../dom';
+import { appendAll, clear, h, icon, type Child } from '../dom';
 import { compact, int, money, shortDate } from '../format';
 import { nominalMax } from '../map/layers';
 import { loadUi, saveUi, type Store } from '../state';
 import type { AppState, Bbox, Filters, Manifest, ViewStats } from '../types';
-import { INFO, coverageDetail, coverageExample, coverageLine } from './facts';
+import { INFO, area, countyCodes, coverageDetail, coverageExample, coverageLine } from './facts';
 import { infoTip } from './infotip';
 
 export interface FilterPanelHandlers {
-  onCounty(code: number | null): void;
+  /** Counties were picked: frame them on the map (an empty list means "all": leave the view alone). */
+  onCounties(codes: number[]): void;
   onMarket(bbox: Bbox): void;
   /** Open the Owners table for the current screen. */
   onShowResults(): void;
+  /** Open "How it works" (optionally at the data coverage table). */
+  onHelp(section?: 'coverage'): void;
 }
 
-export type SectionId = 'county' | 'markets' | 'classes' | 'screens' | 'display';
+export type SectionId = 'where' | 'classes' | 'screens' | 'display';
 const SECTION_DEFAULTS: Record<SectionId, boolean> = {
-  county: true,
-  markets: true,
+  where: true,
   classes: true,
   screens: false,
   display: false,
 };
+/** Other panels mount into the sidebar's flow here (owner signals, top owners, saved screens). */
+export type SlotId = 'signals' | 'insights' | 'saved';
+const MARKETS_SHOWN = 8;
 
 type SegButton<T> = { value: T; el: HTMLButtonElement };
 
@@ -75,10 +78,13 @@ const btlCaption = (step: number): string | null => {
   return Number.isFinite(r) ? `Buildings worth at most ${Math.round(r * 100)}% of the land.` : null;
 };
 
-/** Active screens, for the sidebar summary. */
+/** Active sliders under "More filters", for the sidebar summary. */
 export function activeScreens(f: Filters): number {
   return (f.minHold > 0 ? 1 : 0) + (f.lotStep > 0 ? 1 : 0) + (f.btlStep > 0 ? 1 : 0);
 }
+
+/** A section header's step tag ("01"): the sidebar reads top to bottom as where, what, who. */
+export const stepTag = (n: number | null): HTMLElement | null => (n ? h('span', { class: 'sec-step', 'aria-hidden': 'true' }, String(n).padStart(2, '0')) : null);
 
 interface RangeRow {
   input: HTMLInputElement;
@@ -88,9 +94,17 @@ interface RangeRow {
 export class FilterPanel {
   private ui = loadUi({ sections: { ...SECTION_DEFAULTS } as Record<SectionId, boolean> });
   private sections = new Map<SectionId, { el: HTMLDetailsElement; sum: HTMLElement }>();
-  private countySeg!: { el: HTMLElement; buttons: SegButton<number>[] };
+  private slots: Record<SlotId, HTMLElement> = {
+    signals: h('div', { class: 'slot' }),
+    insights: h('div', { class: 'slot' }),
+    saved: h('div', { class: 'slot' }),
+  };
   private extrudeSeg!: { el: HTMLElement; buttons: SegButton<string>[] };
   private shadeSeg!: { el: HTMLElement; buttons: SegButton<string>[] };
+  private countyChips: { code: number; el: HTMLButtonElement }[] = [];
+  private allCounties!: HTMLButtonElement;
+  private markets!: HTMLElement;
+  private marketsKey = '';
   private chips: { code: string; el: HTMLButtonElement }[] = [];
   private allChip!: HTMLButtonElement;
   private ranges!: { hold: RangeRow; lot: RangeRow; btl: RangeRow & { cap: HTMLElement } };
@@ -98,6 +112,7 @@ export class FilterPanel {
   private kpi!: Record<'parcels' | 'jv' | 'units' | 'sf', HTMLElement>;
   private inviewNote!: HTMLElement;
   private resetBtn!: HTMLButtonElement;
+  private ctaCount!: HTMLElement;
 
   constructor(
     private root: HTMLElement,
@@ -113,11 +128,16 @@ export class FilterPanel {
     });
   }
 
+  /** Where another panel mounts in the sidebar's flow. */
+  slot(id: SlotId): HTMLElement {
+    return this.slots[id];
+  }
+
   private setFilters(patch: Partial<Filters>): void {
     this.store.set({ filters: { ...this.store.get().filters, ...patch } });
   }
 
-  /** Open (and scroll to) a sidebar section: used by the first-visit hint. */
+  /** Open (and scroll to) a sidebar section. */
   openSection(id: SectionId): void {
     const s = this.sections.get(id);
     if (!s) return;
@@ -126,12 +146,12 @@ export class FilterPanel {
     s.el.querySelector('summary')?.focus({ preventScroll: true });
   }
 
-  private section(id: SectionId, title: string, ...body: Child[]): HTMLDetailsElement {
+  private section(id: SectionId, title: string, step: number | null, ...body: Child[]): HTMLDetailsElement {
     const sum = h('span', { class: 'sec-sum' });
     const el = h(
       'details',
       { class: 'sec', 'data-sec': id },
-      h('summary', null, h('span', { class: 'sec-title' }, title), sum, icon('chevron', 16)),
+      h('summary', null, stepTag(step), h('span', { class: 'sec-title' }, title), sum, icon('chevron', 16)),
       h('div', { class: 'sec-body' }, body),
     ) as HTMLDetailsElement;
     el.open = this.ui.sections[id];
@@ -145,33 +165,68 @@ export class FilterPanel {
     return el;
   }
 
-  private render(): void {
-    const m = this.manifest;
-    const sample = m.source.kind === 'sample';
-    const nominalCount = m.data_quality?.nominal_parcels ?? m.stats.nominal_parcels ?? 0;
+  /** Markets to offer: the picked counties' largest, or with none picked each county's largest first. */
+  private marketList(counties: number[]): Manifest['cities'] {
+    const all = this.manifest.cities;
+    if (counties.length) return all.filter((c) => counties.includes(c.county)).slice(0, MARKETS_SHOWN);
+    const order = countyCodes(this.manifest);
+    const firsts = order.map((code) => all.find((c) => c.county === code)).filter((c): c is Manifest['cities'][number] => !!c);
+    const rest = all.filter((c) => !firsts.includes(c));
+    return [...firsts, ...rest]
+      .slice(0, MARKETS_SHOWN)
+      .sort((a, b) => order.indexOf(a.county) - order.indexOf(b.county) || b.count - a.count);
+  }
 
-    this.countySeg = segmented<number>(
-      'County',
-      [{ value: 0, label: 'All' }, ...COUNTY_ORDER.map((c) => ({ value: c, label: COUNTY_META[c]!.name }))],
-      (v) => {
-        this.setFilters({ counties: v ? [v] : [] });
-        this.handlers.onCounty(v || null);
-      },
-    );
-
-    const markets = h(
-      'div',
-      { class: 'markets' },
-      m.cities.slice(0, 8).map((c) =>
+  private renderMarkets(counties: number[]): void {
+    const key = counties.join(',');
+    if (key === this.marketsKey && this.markets.childElementCount) return;
+    this.marketsKey = key;
+    clear(this.markets);
+    for (const c of this.marketList(counties)) {
+      this.markets.append(
         h(
           'button',
           { type: 'button', class: 'market', title: `Fly to ${c.name}`, onclick: () => this.handlers.onMarket(c.bbox) },
           h('span', { class: 'market-name' }, c.name),
           h('span', { class: 'n' }, `${COUNTY_META[c.county]?.short ?? ''} · ${int(c.count)}`),
         ),
-      ),
-    );
+      );
+    }
+  }
 
+  private render(): void {
+    const m = this.manifest;
+    const sample = m.source.kind === 'sample';
+    const nominalCount = m.data_quality?.nominal_parcels ?? m.stats.nominal_parcels ?? 0;
+    const where = area(m);
+
+    // ---- 01 Location: counties north to south (any mix), then the largest markets in them -------
+    const toggleCounty = (code: number) => {
+      const cur = new Set(this.store.get().filters.counties);
+      if (cur.has(code)) cur.delete(code);
+      else cur.add(code);
+      const next = countyCodes(m).filter((c) => cur.has(c));
+      // Every county picked is the same as none: keep the state (and the link) simple.
+      const counties = next.length === m.counties.length ? [] : next;
+      this.setFilters({ counties });
+      this.handlers.onCounties(counties);
+    };
+    this.allCounties = h('button', { type: 'button', class: 'chip chip-all', onclick: () => this.setFilters({ counties: [] }) }, 'All counties');
+    this.countyChips = countyCodes(m).map((code) => {
+      const c = m.counties.find((x) => x.code === code);
+      return {
+        code,
+        el: h(
+          'button',
+          { type: 'button', class: 'chip', title: `${COUNTY_META[code]?.badge ?? code}: ${int(c?.count ?? 0)} parcels`, onclick: () => toggleCounty(code) },
+          h('span', { class: 'chip-label' }, COUNTY_META[code]?.name ?? String(code)),
+          h('span', { class: 'n' }, compact(c?.count ?? 0)),
+        ),
+      };
+    });
+    this.markets = h('div', { class: 'markets' });
+
+    // ---- 02 Asset class --------------------------------------------------------------------------
     this.allChip = h('button', { type: 'button', class: 'chip chip-all', onclick: () => this.setFilters({ classes: [] }) }, 'All classes');
     this.chips = m.asset_classes.map((c) => {
       const el = h(
@@ -189,12 +244,13 @@ export class FilterPanel {
         },
         h('i', { class: 'chip-sw' }),
         h('span', { class: 'chip-label' }, CLASS_SHORT[c.code] ?? c.label),
-        h('span', { class: 'n' }, int(c.count)),
+        h('span', { class: 'n' }, compact(c.count)),
       );
       el.style.setProperty('--c', CLASS_COLORS[c.code] ?? CLASS_FALLBACK);
       return { code: c.code, el };
     });
 
+    // ---- More filters ----------------------------------------------------------------------------
     const range = (label: string, min: number, max: number, onInput: (v: number) => void) => {
       const input = h('input', { type: 'range', min, max, step: 1, value: min, 'aria-label': label }) as HTMLInputElement;
       input.addEventListener('input', () => onInput(Number(input.value)));
@@ -225,6 +281,7 @@ export class FilterPanel {
       this.store.set({ shade: v as AppState['shade'] }),
     );
 
+    // ---- Live totals -----------------------------------------------------------------------------
     const kpi = (label: string, info?: string) => {
       const v = h('div', { class: 'kpi-v' }, '—');
       return {
@@ -241,9 +298,10 @@ export class FilterPanel {
 
     this.resetBtn = h(
       'button',
-      { type: 'button', class: 'btn ghost sm', onclick: () => this.store.set({ filters: { ...DEFAULT_FILTERS }, search: null }) },
+      { type: 'button', class: 'btn quiet sm', onclick: () => this.store.set({ filters: { ...DEFAULT_FILTERS }, search: null }) },
       'Reset all filters',
     );
+    this.ctaCount = h('p', { class: 'cta-count', hidden: true });
 
     const rangeRow = (label: string, r: RangeRow, info?: Child, ...extra: Child[]) =>
       h(
@@ -267,9 +325,13 @@ export class FilterPanel {
           'div',
           { class: 'brand-text' },
           h('div', { class: 'brand-name' }, APP_NAME),
-          h('div', { class: 'brand-sub' }, 'Commercial & multifamily parcels'),
+          h('div', { class: 'brand-sub' }, where.n > 1 ? `${where.span} · ${where.n} counties` : where.names),
         ),
-        h('span', { class: 'brand-ver' }, APP_VERSION),
+        h(
+          'button',
+          { type: 'button', class: 'icon-btn brand-help', title: 'How it works (press ?)', 'aria-label': 'How it works', onclick: () => this.handlers.onHelp() },
+          icon('help', 16),
+        ),
       ),
       sample
         ? h('div', { class: 'source-flag' }, h('strong', null, 'Sample data.'), ' Synthetic parcels for demonstration only.')
@@ -277,16 +339,30 @@ export class FilterPanel {
       h(
         'section',
         { class: 'inview', 'aria-label': 'Totals for the parcels in view' },
-        h('div', { class: 'inview-head' }, h('h2', null, 'In view'), h('span', { class: 'inview-sub' }, 'after filters')),
+        h('div', { class: 'inview-head' }, h('h2', null, h('i', { class: 'live-dot', 'aria-hidden': 'true' }), 'On the map now'), h('span', { class: 'inview-sub' }, 'after filters')),
         h('div', { class: 'kpis' }, kp.tile, kj.tile, ku.tile, ks.tile),
         this.inviewNote,
       ),
-      this.section('county', 'County', this.countySeg.el),
-      this.section('markets', 'Markets', markets),
-      this.section('classes', 'Asset class', h('div', { class: 'chips' }, this.allChip, this.chips.map((c) => c.el))),
+      h(
+        'div',
+        { class: 'flow-head' },
+        h('h2', null, 'Build a list'),
+        h('p', null, 'Pick where, what and who. The map and the owners list follow.'),
+      ),
+      this.section(
+        'where',
+        'Location',
+        1,
+        h('div', { class: 'chips county-chips', role: 'group', 'aria-label': 'Counties, north to south' }, this.allCounties, this.countyChips.map((c) => c.el)),
+        h('div', { class: 'field-label markets-label' }, 'Jump to a market'),
+        this.markets,
+      ),
+      this.section('classes', 'Asset class', 2, h('div', { class: 'chips' }, this.allChip, this.chips.map((c) => c.el))),
+      this.slots.signals,
       this.section(
         'screens',
-        'Screens',
+        'More filters',
+        null,
         rangeRow(
           'Min years held',
           hold,
@@ -307,26 +383,35 @@ export class FilterPanel {
           ),
           infoTip(
             'nominal-value parcels',
-            `Parcels assessed under ${money(max)} (${int(nominalCount)} in this dataset) are usually common areas, condo-style or sub-parcels whose value sits on a neighboring parcel, like CityPlace’s $100 parcels.\n\nThey stay on the map and keep their badge in the parcel panel, but value screens and the in-view totals leave them out unless this is on.`,
+            `Parcels assessed under ${money(max)} (${int(nominalCount)} in this dataset) are usually common areas, condo-style or sub-parcels whose value sits on a neighboring parcel, like CityPlace’s $100 parcels.\n\nThey stay on the map and keep their badge in the parcel panel, but value filters and the totals leave them out unless this is on.`,
           ),
         ),
+      ),
+      h(
+        'div',
+        { class: 'cta' },
         h(
           'button',
-          { type: 'button', class: 'btn solid sm screens-cta', onclick: () => this.handlers.onShowResults() },
-          icon('table', 14),
+          { type: 'button', class: 'btn solid cta-btn', onclick: () => this.handlers.onShowResults() },
+          icon('table', 15),
           'See matching owners',
+          icon('arrow', 14),
         ),
+        this.ctaCount,
+        this.resetBtn,
       ),
+      this.slots.insights,
+      this.slots.saved,
       this.section(
         'display',
-        'Display',
-        h('div', { class: 'field' }, h('div', { class: 'field-label' }, '3D height'), this.extrudeSeg.el),
-        h('div', { class: 'field' }, h('div', { class: 'field-label' }, 'Color by'), this.shadeSeg.el),
+        'Map style',
+        null,
+        h('div', { class: 'field' }, h('div', { class: 'field-label' }, '3D height shows'), this.extrudeSeg.el),
+        h('div', { class: 'field' }, h('div', { class: 'field-label' }, 'Color shows'), this.shadeSeg.el),
       ),
       h(
         'footer',
         { class: 'panel-foot' },
-        this.resetBtn,
         h(
           'p',
           { class: 'cap' },
@@ -335,8 +420,9 @@ export class FilterPanel {
         h(
           'p',
           { class: 'cap' },
-          `${m.source.label} · built ${shortDate(m.generated_at)}`,
-          m.source.tax_roll_year ? ` · ${m.source.tax_roll_year} roll` : '',
+          m.source.tax_roll_year ? `${m.source.tax_roll_year} tax roll · ` : '',
+          `updated ${shortDate(m.generated_at)} · `,
+          h('button', { type: 'button', class: 'linklike', onclick: () => this.handlers.onHelp('coverage') }, 'Data and coverage'),
         ),
       ),
     );
@@ -344,9 +430,18 @@ export class FilterPanel {
 
   private sync(s: AppState): void {
     const f = s.filters;
-    markSeg(this.countySeg.buttons, f.counties.length === 1 ? f.counties[0]! : 0);
     markSeg(this.extrudeSeg.buttons, s.extrude);
     markSeg(this.shadeSeg.buttons, s.shade);
+
+    const counties = new Set(f.counties);
+    this.allCounties.classList.toggle('on', counties.size === 0);
+    this.allCounties.setAttribute('aria-pressed', String(counties.size === 0));
+    for (const c of this.countyChips) {
+      c.el.classList.toggle('on', counties.has(c.code));
+      c.el.setAttribute('aria-pressed', String(counties.has(c.code)));
+    }
+    this.renderMarkets(f.counties);
+
     const active = new Set(f.classes);
     this.allChip.classList.toggle('on', active.size === 0);
     this.allChip.setAttribute('aria-pressed', String(active.size === 0));
@@ -372,24 +467,31 @@ export class FilterPanel {
 
     // Section summaries: what is applied, readable while the section is collapsed.
     const sum = (id: SectionId, text: string, on = false) => {
-      const s = this.sections.get(id)!;
-      s.sum.textContent = text;
-      s.sum.classList.toggle('on', on);
+      const sec = this.sections.get(id)!;
+      sec.sum.textContent = text;
+      sec.sum.classList.toggle('on', on);
     };
-    sum('county', f.counties.length === 1 ? COUNTY_META[f.counties[0]!]?.name ?? '' : 'All', f.counties.length > 0);
-    sum('markets', `${Math.min(this.manifest.cities.length, 8)} cities`);
+    const names = f.counties.map((c) => COUNTY_META[c]?.name ?? String(c));
+    sum('where', names.length === 0 ? 'All counties' : names.length <= 2 ? names.join(', ') : `${names.length} counties`, names.length > 0);
     sum('classes', f.classes.length ? `${f.classes.length} of ${this.chips.length}` : 'All', f.classes.length > 0);
-    const n = activeScreens(f);
-    sum('screens', n ? `${n} active` : 'None', n > 0);
+    const n = activeScreens(f) + (f.includeNominal ? 1 : 0);
+    sum('screens', n ? `${n} on` : 'None', n > 0);
     const ext = EXTRUDE_MODES.find((x) => x.id === s.extrude)?.label ?? '';
     const shade = SHADE_MODES.find((x) => x.id === s.shade)?.label ?? '';
     sum('display', `${ext} · ${shade}`);
 
-    const dirty = f.counties.length > 0 || f.classes.length > 0 || n > 0 || f.includeNominal || f.presets.length > 0 || !!s.search;
-    this.resetBtn.disabled = !dirty;
+    const dirty = f.counties.length > 0 || f.classes.length > 0 || n > 0 || f.presets.length > 0 || !!s.search;
+    this.resetBtn.hidden = !dirty;
   }
 
-  setStats(s: ViewStats): void {
+  /** Totals for the view; null while they are still being loaded. */
+  setStats(s: ViewStats | null): void {
+    for (const el of Object.values(this.kpi)) el.classList.toggle('pending', !s);
+    if (!s) {
+      for (const el of Object.values(this.kpi)) el.textContent = '…';
+      this.inviewNote.hidden = true;
+      return;
+    }
     this.kpi.parcels.textContent = int(s.parcels);
     this.kpi.jv.textContent = money(s.jv);
     this.kpi.units.textContent = s.units ? int(s.units) : '—';
@@ -398,5 +500,11 @@ export class FilterPanel {
     this.inviewNote.textContent = s.nominal
       ? `${int(s.nominal)} nominal-value ${s.nominal === 1 ? 'parcel' : 'parcels'} in view not counted`
       : '';
+  }
+
+  /** Matches for the whole screen (every county), once the parcel table is loaded; null hides the line. */
+  setMatches(n: { owners: number; parcels: number } | null): void {
+    this.ctaCount.hidden = !n;
+    if (n) this.ctaCount.textContent = `${int(n.owners)} ${n.owners === 1 ? 'owner' : 'owners'} · ${int(n.parcels)} ${n.parcels === 1 ? 'parcel' : 'parcels'} match`;
   }
 }

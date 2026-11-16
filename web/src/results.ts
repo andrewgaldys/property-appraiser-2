@@ -1,11 +1,12 @@
 import { BTL_STEPS, CLASS_BADGE, COUNTY_META, LONG_HOLD_YEARS, LOT_STEPS_AC, UNDERBUILT } from './config';
+import { entityLabel, sunbizUrl } from './entity';
 import { parcelId } from './format';
 import { mailingLine, type IndexRow, type ParcelIndex } from './parcelIndex';
-import type { Bbox, Filters, OwnerGrouping, OwnerRef, SearchSet } from './types';
+import type { Bbox, Filters, OwnerGrouping, OwnerRef, OwnerRow, SearchSet, TileProps, ViewStats } from './types';
 
 /**
  * The results tables' logic: which parcels match the active filters (the same rules as the map's
- * filter expression, evaluated on the parcel index so they cover all three counties), how they
+ * filter expression, evaluated on the parcel index so they cover every county), how they
  * group into owners, and the CSV a broker takes into a CRM or a mail merge.
  */
 
@@ -23,7 +24,7 @@ export function ownerRefOf(row: Pick<IndexRow, 'pid' | 'onk' | 'oak'>, grouping:
   return { kind: 'p', id: row.pid };
 }
 
-/** Every parcel of a group, in all three counties. */
+/** Every parcel of a group, in every county. */
 export function groupMembers(ix: ParcelIndex, ref: OwnerRef): IndexRow[] {
   if (ref.kind === 'p') {
     const r = ix.byPid.get(String(ref.id));
@@ -34,6 +35,67 @@ export function groupMembers(ix: ParcelIndex, ref: OwnerRef): IndexRow[] {
 }
 
 /** Mirror of map/layers.ts filterExpr: change both together. */
+/** An index row as the tile attributes the map and tooltip use (what an owner row's click opens). */
+const tileLike = (r: IndexRow): TileProps => ({
+  pid: r.pid, co: r.co, cls: r.cls, uc: r.uc, addr: r.addr, own: r.own,
+  jv: r.jv ?? undefined, sf: r.sf ?? undefined, lot: r.lot ?? undefined, u: r.u ?? undefined, yb: r.yb ?? undefined,
+  btl: r.btl ?? undefined, sp: r.sp ?? undefined, sy: r.sy ?? undefined, hold: r.hold ?? undefined, hf: r.hf ?? undefined,
+  onk: r.onk ?? undefined, oak: r.oak ?? undefined, oa: r.oa ?? undefined, spf: r.spf ?? undefined, et: r.et ?? undefined,
+});
+
+/**
+ * Totals and top owners for the parcels in the map view that pass the screen, from the parcel
+ * index: exact at every zoom and independent of what the map has drawn. Nominal-value parcels
+ * stay out of the totals unless they are included. Owner groups as in ownerRefOf: the mailing
+ * address when grouping by address (never a registered agent's), else the owner name, else the parcel.
+ */
+export function viewStats(
+  ix: ParcelIndex,
+  f: Filters,
+  search: SearchSet | null,
+  nominal: number,
+  view: Bbox,
+  grouping: OwnerGrouping,
+  agents: Set<number>,
+): ViewStats {
+  const match = matcher(f, search, nominal, view);
+  const owners = new Map<string, OwnerRow>();
+  let parcels = 0;
+  let jv = 0;
+  let units = 0;
+  let sf = 0;
+  let skipped = 0;
+  for (const r of ix.rows) {
+    if (!match(r)) continue;
+    const v = r.jv ?? 0;
+    if (!f.includeNominal && v < nominal) {
+      skipped++;
+      continue;
+    }
+    parcels++;
+    jv += v;
+    units += r.u ?? 0;
+    sf += r.sf ?? 0;
+    const kind = grouping === 'addr' && r.oak != null && !agents.has(r.oak) ? 'a' : r.onk != null ? 'n' : 'p';
+    const id = kind === 'a' ? r.oak! : kind === 'n' ? r.onk! : r.pid;
+    const key = `${kind}${id}`;
+    const g = owners.get(key);
+    if (!g) owners.set(key, { key, kind, id, parcels: 1, jv: v, units: r.u ?? 0, sf: r.sf ?? 0, top: tileLike(r), own: r.own || undefined });
+    else {
+      g.parcels++;
+      g.jv += v;
+      g.units += r.u ?? 0;
+      g.sf += r.sf ?? 0;
+      if (v > (g.top.jv ?? 0)) {
+        g.top = tileLike(r);
+        if (r.own) g.own = r.own;
+      }
+    }
+  }
+  const ranked = [...owners.values()].sort((a, b) => b.jv - a.jv || b.parcels - a.parcels);
+  return { parcels, jv, units, sf, nominal: skipped, owners: ranked.slice(0, 10), ownerCount: owners.size };
+}
+
 export function matcher(f: Filters, search: SearchSet | null, nominal: number, view: Bbox | null): (r: IndexRow) => boolean {
   const pids = search ? new Set(search.pids) : null;
   const counties = f.counties.length ? new Set(f.counties) : null;
@@ -207,10 +269,11 @@ const saleDateIso = (r: IndexRow): string | null => (r.sy ? (r.sm ? `${r.sy}-${S
 
 export function ownersCsv(ix: ParcelIndex, groups: OwnerResult[], grouping: OwnerGrouping): string {
   const header = [
-    'Owner name', 'Related entities', 'Matching parcels', 'Total parcels (all 3 counties)', 'Assessed market value (matching)',
+    'Owner name', 'Related entities', 'Matching parcels', 'Total parcels (all counties)', 'Assessed market value (matching)',
     'Building SF (matching)', 'Residential units (matching)', 'Asset classes', 'Longest hold (years)', 'Average hold (years, known holds)',
     'Mailing address 1', 'Mailing address 2', 'Mailing city', 'Mailing state', 'Mailing ZIP', 'Other mailing addresses',
     'Out-of-area owner', 'Estate or trust', 'Small portfolio owner', 'Largest property', 'Largest property city', 'Grouped by',
+    'Owner type (from name)', 'Sunbiz lookup',
   ];
   const rows = groups.map((g) => [
     g.label,
@@ -235,6 +298,8 @@ export function ownersCsv(ix: ParcelIndex, groups: OwnerResult[], grouping: Owne
     g.top.addr,
     g.top.city,
     g.ref.kind === 'a' ? 'Mailing address' : g.ref.kind === 'n' ? 'Owner name' : grouping === 'addr' ? 'Single parcel' : 'Owner name',
+    entityLabel(g.label) || null,
+    sunbizUrl(g.label, g.top.co) || null,
   ]);
   return toCsv(header, rows);
 }
@@ -245,7 +310,7 @@ export function parcelsCsv(rows: IndexRow[], useCodes: Record<string, string>, n
     'Nominal value (common area / sub-parcel)', 'Building SF', 'Lot acres', 'Lot SF', 'Residential units', 'Year built',
     'Last sale date', 'Last sale price', 'Years held', 'Owner name', 'Mailing address 1', 'Mailing address 2',
     'Mailing city', 'Mailing state', 'Mailing ZIP', 'Mailing address (one line)', 'Out-of-area owner', 'Estate or trust',
-    'Small portfolio owner', 'Latitude', 'Longitude', 'Link',
+    'Small portfolio owner', 'Latitude', 'Longitude', 'Link', 'Owner type (from name)', 'Sunbiz lookup',
   ];
   const out = rows.map((r) => [
     parcelId(r.pid, r.co),
@@ -278,6 +343,8 @@ export function parcelsCsv(rows: IndexRow[], useCodes: Record<string, string>, n
     r.lat,
     r.lon,
     link(r.pid),
+    entityLabel(r.own) || null,
+    sunbizUrl(r.own, r.co) || null,
   ]);
   return toCsv(header, out);
 }

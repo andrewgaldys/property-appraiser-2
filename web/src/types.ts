@@ -73,7 +73,7 @@ export interface Manifest {
   sales_coverage?: Record<string, SalesCoverage>;
   /** Prospecting thresholds the pipeline used (absent in older bundles). */
   prospecting?: {
-    /** Florida owners inside the three counties are "out of area" beyond this distance (miles). */
+    /** Florida owners inside the coverage area are "out of area" beyond this distance (miles). */
     out_of_area_miles: number;
     /** Owner-name group size range for "small portfolio owner". */
     small_portfolio: [number, number];
@@ -90,7 +90,9 @@ export interface Manifest {
   };
   details: { url: string; shard_hex: number };
   /** Every parcel in one compact table: search, results tables, CSV (absent in older bundles). */
-  index?: { url: string; fields: string[] };
+  index?: {
+    /** Uncompressed size of the file, for download progress (absent in older bundles). */
+    bytes?: number; url: string; fields: string[] };
   owners: { url: string; shard_hex: number; item_fields: string[]; max_items: number; agent_addr_keys?: number[] };
 }
 
@@ -124,7 +126,7 @@ export interface TileProps {
   hf?: number;
   onk?: number;
   oak?: number;
-  /** Owner mailing address: 2 out of state; 1 elsewhere in Florida (outside the three counties, or more than prospecting.out_of_area_miles from the parcel). */
+  /** Owner mailing address: 2 out of state; 1 elsewhere in Florida (outside the coverage area, or more than prospecting.out_of_area_miles from the parcel). */
   oa?: number;
   /** Small portfolio owner (2–10 parcels, one asset class). */
   spf?: number;

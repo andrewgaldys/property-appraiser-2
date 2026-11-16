@@ -1,8 +1,8 @@
 """Sale history from the county property appraisers, so hold periods reach back decades.
 
 FDOR's statewide data (the cadastral layer, NAL / SDF) only carries the current roll's sales window
-(2025-26 on the 2026 roll), and the FDOR portal keeps no older rolls. The three property appraisers
-publish much longer histories for free:
+(2025-26 on the 2026 roll), and the FDOR portal keeps no older rolls. The counties publish much
+longer histories for free:
 
 * Palm Beach (60): the Property Appraiser's free CAMA flat file ``CAMA_CSV_CERT<year>.zip`` (each parcel's
   five most recent transfers), plus the county GIS "Property Information Table" (PBCGOV_GIS on ArcGIS
@@ -11,6 +11,15 @@ publish much longer histories for free:
   with FDOR qualification codes). https://www.pamartinfl.gov/tools-resources/data-downloads
 * St. Lucie (66): the Property Appraiser's CAMA export ``Transactions.zip`` (every recorded transfer).
   https://www.paslc.gov/231/Data-Requests (its download server only answers browsers: download by hand)
+
+* Broward (16): the county GIS layer "PARCEL POLY BCPA TAXROLL" (Broward County on ArcGIS Online), the
+  Property Appraiser's tax roll joined to parcels: each parcel's *five most recent transfers* with
+  the documentary stamps paid, from which the price follows (see `doc_stamp_price`).
+* Miami-Dade (23): the county open-data "Property Point View" (PaGISView): each folio's *latest
+  transfer* (DOS_1 / PRICE_1), updated weekly.
+* Indian River (41): the county GIS parcel service (IRCPA/Parcels_MS): each parcel's *latest sale*
+  (SALE_YEAR / SALE_MONTH / SALE_PRICE). The Property Appraiser's full CAMA extract only downloads
+  in a browser: https://www.ircpa.org/site-links/downloads
 
 For every parcel each source yields `SaleFacts`: the latest sale of at least `min_price`, or, when
 none is on record, the year from which it can vouch that no such sale happened. A nominal transfer
@@ -45,7 +54,19 @@ SOURCES = {
     60: "Palm Beach County Property Appraiser CAMA file (five most recent transfers) and county GIS latest transfer",
     53: "Martin County Property Appraiser transfers export",
     66: "St. Lucie County Property Appraiser transactions export",
+    16: "Broward County GIS parcel layer with the Property Appraiser's tax roll (five most recent transfers)",
+    23: "Miami-Dade County open data, Property Point View (latest transfer)",
+    41: "Indian River County GIS parcel service (latest sale)",
 }
+
+MDC_TABLE = (
+    "https://services.arcgis.com/8Pc9XBTAsYuxx9Ny/arcgis/rest/services/PaGISView_gdb/FeatureServer/0/query"
+)
+BRO_TABLE = (
+    "https://services.arcgis.com/JMAJrTsHNLrSsWf5/ArcGIS/rest/services/"
+    "PARCEL_POLY_BCPA_TAXROLL/FeatureServer/0/query"
+)
+IRC_TABLE = "https://gisportal.ircgov.com/server3/rest/services/IRCPA/Parcels_MS/MapServer/0/query"
 
 
 @dataclass(frozen=True)
@@ -151,6 +172,172 @@ def palm_beach(pids: list[str], cache: Path, min_price: int, refresh: bool = Fal
         else:
             out[pid] = SaleFacts(None, d.year)
     return out
+
+
+# --- Broward, Miami-Dade, Indian River: county GIS tables, queried by parcel ID ---------------------
+
+def _gis_rows(pids: list[str], cache: Path, refresh: bool, *, url: str, id_field: str, out_fields: str,
+              query_id, row_of, batch: int, label: str) -> dict[str, list | None]:
+    """Rows of a county GIS table for `pids` (None = not in the table), cached as gzip JSON between runs.
+
+    `query_id` turns our normalized parcel ID into the table's own format; `row_of` reduces one
+    feature's attributes to the JSON row kept in the cache. Several rows for one parcel (multi-part
+    polygons) keep the first non-empty one. The cache is saved every few batches, so an interrupted
+    run resumes where it stopped.
+    """
+    known: dict[str, list | None] = {}
+    if cache.exists() and not refresh:
+        known = json.loads(gzip.decompress(cache.read_bytes()))
+    todo = sorted(set(pids) - set(known))
+
+    def save() -> None:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        tmp = cache.with_name(cache.name + ".tmp")
+        tmp.write_bytes(gzip.compress(json.dumps(known, separators=(",", ":")).encode(), mtime=0))
+        tmp.replace(cache)
+
+    for n, i in enumerate(range(0, len(todo), batch)):
+        part = todo[i : i + batch]
+        back = {query_id(p): p for p in part}
+        where = f"{id_field} IN (" + ",".join(f"'{q}'" for q in back) + ")"
+        found: dict[str, list] = {}
+        offset = 0
+        while True:
+            data = arcgis.query(url, {
+                "where": where,
+                "outFields": out_fields,
+                "returnGeometry": "false",
+                "orderByFields": id_field,
+                "resultOffset": str(offset),
+                "resultRecordCount": "1000",
+                "f": "json",
+            }, label=f"{label} {i:,}")
+            feats = data.get("features") or []
+            for f in feats:
+                a = f["attributes"]
+                pid = back.get(str(a.get(id_field) or "").strip())
+                row = row_of(a)
+                if pid and row is not None and pid not in found:
+                    found[pid] = row
+            if not feats or not data.get("exceededTransferLimit"):
+                break
+            offset += len(feats)
+        for p in part:
+            known[p] = found.get(p)
+        if n % 10 == 9:
+            save()
+            print(f"  {label}: {i + len(part):,} / {len(todo):,} parcels", flush=True)
+    if todo:
+        save()
+    return known
+
+
+def _latest_fact(year: int | None, month: int | None, price: float | None, min_price: int) -> SaleFacts | None:
+    """A source that only publishes the latest transfer: a priced one is the last sale; a nominal one
+    proves that no priced sale happened after it (the one before it is not on record there)."""
+    if not year or not MIN_VALID_YEAR <= year <= dt.date.today().year:
+        return None
+    if (price or 0) >= min_price:
+        return SaleFacts(Sale(int(year), int(month or 0), int(price)))
+    return SaleFacts(None, int(year))
+
+
+def miami_dade(pids: list[str], cache: Path, min_price: int, refresh: bool = False) -> dict[str, SaleFacts]:
+    """Latest transfer per Miami-Dade folio: DOS_1 ('YYYYMMDD') and PRICE_1 (0 on nominal transfers)."""
+    rows = _gis_rows(
+        pids, cache, refresh, url=MDC_TABLE, id_field="FOLIO", out_fields="FOLIO,DOS_1,PRICE_1",
+        query_id=lambda p: p.zfill(13), row_of=lambda a: [clean_str(a.get("DOS_1")) or None, a.get("PRICE_1")],
+        batch=500, label="Miami-Dade sales",
+    )
+    out: dict[str, SaleFacts] = {}
+    for pid in pids:
+        dos, price = rows.get(pid) or (None, None)
+        if not dos or len(dos) < 6 or not dos[:6].isdigit():
+            continue
+        fact = _latest_fact(int(dos[:4]), int(dos[4:6]) if 1 <= int(dos[4:6]) <= 12 else 0, price, min_price)
+        if fact:
+            out[pid] = fact
+    return out
+
+
+def indian_river_pin(pid: str) -> str:
+    """Our normalized ID -> the county's PIN: 20 digits, a dot and a check digit ('...00003.4').
+
+    norm_parcel_id drops the dot (and a whole trailing '.0'), so both shapes map back here.
+    """
+    return f"{pid}.0" if len(pid) <= 20 else f"{pid[:20]}.{pid[20:]}"
+
+
+def indian_river(pids: list[str], cache: Path, min_price: int, refresh: bool = False) -> dict[str, SaleFacts]:
+    """Latest sale per Indian River parcel: SALE_YEAR, SALE_MONTH, SALE_PRICE."""
+    rows = _gis_rows(
+        pids, cache, refresh, url=IRC_TABLE, id_field="PP_PIN", out_fields="PP_PIN,SALE_YEAR,SALE_MONTH,SALE_PRICE",
+        query_id=indian_river_pin,
+        row_of=lambda a: [a.get("SALE_YEAR"), a.get("SALE_MONTH"), a.get("SALE_PRICE")],
+        batch=250, label="Indian River sales",
+    )
+    out: dict[str, SaleFacts] = {}
+    for pid in pids:
+        year, month, price = rows.get(pid) or (None, None, None)
+        fact = _latest_fact(year, month if month and 1 <= month <= 12 else 0, price, min_price)
+        if fact:
+            out[pid] = fact
+    return out
+
+
+# Florida documentary stamp tax on deeds (s. 201.02, F.S.): dollars per $100 of consideration, from
+# each rate's effective date. Broward publishes the stamps paid, not the price. A deed for nominal
+# consideration pays the minimum (one $100 step), which is how those show up in the data.
+DOC_STAMP_RATES: list[tuple[dt.date, float]] = [
+    (dt.date(1992, 8, 1), 0.70),
+    (dt.date(1991, 6, 1), 0.60),
+    (dt.date(1987, 7, 1), 0.55),
+    (dt.date(1985, 7, 1), 0.50),
+    (dt.date(1981, 7, 1), 0.45),
+    (dt.date(1979, 10, 1), 0.40),
+    (dt.date(1963, 7, 1), 0.30),
+    (dt.date(1957, 7, 1), 0.20),
+    (dt.date(1931, 1, 1), 0.10),
+]
+
+
+def doc_stamp_price(stamps: float | None, when: dt.date) -> int:
+    """Sale price implied by the documentary stamps paid; 0 for no stamps or the nominal minimum."""
+    if not stamps or stamps <= 0:
+        return 0
+    rate = next((r for start, r in DOC_STAMP_RATES if when >= start), DOC_STAMP_RATES[-1][1])
+    if stamps <= rate * 1.001:  # minimum stamps: "$10 and other good and valuable consideration"
+        return 0
+    return int(round(stamps / rate * 100))
+
+
+def broward(pids: list[str], cache: Path, min_price: int, refresh: bool = False) -> tuple[dict[str, SaleFacts], int | None]:
+    """Five most recent transfers per Broward folio: SALE_DATE_n (epoch ms), STAMP_AMOUNT_n, SALEn_QUAL_CODE."""
+    fields = ["FOLIO"] + [f for k in range(1, 6) for f in (f"SALE_DATE_{k}", f"STAMP_AMOUNT_{k}", f"SALE{k}_QUAL_CODE")]
+    rows = _gis_rows(
+        pids, cache, refresh, url=BRO_TABLE, id_field="FOLIO", out_fields=",".join(fields),
+        query_id=lambda p: p.zfill(12),
+        row_of=lambda a: [[a.get(f"SALE_DATE_{k}"), a.get(f"STAMP_AMOUNT_{k}"), clean_str(a.get(f"SALE{k}_QUAL_CODE")) or None]
+                          for k in range(1, 6) if a.get(f"SALE_DATE_{k}") is not None],
+        batch=300, label="Broward sales",
+    )
+    this_year = dt.date.today().year
+    years: list[int] = []
+    out: dict[str, SaleFacts] = {}
+    for pid in pids:
+        transfers = []
+        for ms, stamps, qual in rows.get(pid) or []:
+            try:
+                d = dt.datetime.fromtimestamp(ms / 1000, tz=dt.timezone.utc).date()
+            except (OverflowError, OSError, ValueError, TypeError):
+                continue
+            if not MIN_VALID_YEAR <= d.year <= this_year:
+                continue
+            years.append(d.year)
+            transfers.append((d.year, d.month, doc_stamp_price(stamps, d), qual if qual and qual.isdigit() else None))
+        if transfers:
+            out[pid] = _facts(transfers, min_price)
+    return out, coverage_start(years)
 
 
 # --- Martin and St. Lucie: full transfer exports --------------------------------------------------

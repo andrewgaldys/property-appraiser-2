@@ -88,13 +88,43 @@ export class DataStore {
   /** The loaded parcel index, once available (null before the first load finishes). */
   loadedIndex: ParcelIndex | null = null;
 
-  /** Every parcel in one table (~2.6 MB gzipped), fetched once on first use (search, results tables). */
+  private ixListeners = new Set<(fraction: number) => void>();
+
+  /** Follow the parcel index download: `fn(0..1)` as bytes arrive, then 1 when it is ready. Returns an unsubscribe. */
+  onIndexProgress(fn: (fraction: number) => void): () => void {
+    this.ixListeners.add(fn);
+    return () => this.ixListeners.delete(fn);
+  }
+
+  /** The index is one large JSON file: read it as a stream so the wait can show progress. */
+  private async indexJson(rel: string): Promise<RawIndex> {
+    const res = await fetch(this.url(rel));
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${rel}`);
+    const total = this.manifest.index?.bytes;
+    if (!total || !res.body) return (await res.json()) as RawIndex;
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let got = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      got += value.length;
+      // Stop just short of 1: parsing and indexing still follow the last byte.
+      const fraction = Math.min(got / total, 0.97);
+      for (const fn of this.ixListeners) fn(fraction);
+    }
+    return (await new Response(new Blob(chunks as BlobPart[])).json()) as RawIndex;
+  }
+
+  /** Every parcel in one table, fetched once on first use (search, results tables, exports). */
   parcelIndex(): Promise<ParcelIndex> {
     if (!this.parcelIx) {
       const url = this.manifest.index?.url;
       if (!url) return Promise.reject(new Error('This data bundle has no parcel index'));
-      this.parcelIx = this.json<RawIndex>(url).then((raw) => {
+      this.parcelIx = this.indexJson(url).then((raw) => {
         this.loadedIndex = buildIndex(raw, this.manifest.use_codes ?? {});
+        for (const fn of this.ixListeners) fn(1);
         return this.loadedIndex;
       });
       this.parcelIx.catch(() => {

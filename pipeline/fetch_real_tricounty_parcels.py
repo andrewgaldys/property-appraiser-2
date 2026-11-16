@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
-"""Download every real commercial / multifamily / industrial / institutional parcel in Martin (53),
-St. Lucie (66) and Palm Beach (60) from the Florida Statewide Cadastral FeatureServer and publish
-them as the web data bundle (replacing the synthetic sample).
+"""Download every real commercial / multifamily / industrial / institutional parcel on Florida's
+Atlantic coast from Indian River to Miami-Dade (the counties in pa2.config.COUNTIES: Indian River 41,
+St. Lucie 66, Martin 53, Palm Beach 60, Broward 16, Miami-Dade 23) from the Florida Statewide
+Cadastral FeatureServer and publish them as the web data bundle (replacing the synthetic sample).
+
+The file keeps its original name: it started with three counties.
 
 Source: Florida Statewide Cadastral (FDOR tax roll joined to county parcel polygons), ArcGIS Online
   https://services9.arcgis.com/Gh9awoU677aKree0/arcgis/rest/services/Florida_Statewide_Cadastral/FeatureServer/0
@@ -12,7 +15,8 @@ DOR use codes kept by default (DOR_UC):
   040-049 vacant industrial + industrial, 070-079 institutional.
 Opt-in: 004 condominium *units* (--include-condo-units) and 002 individual mobile homes
 (--include-mobile-homes). Each condo unit is its own parcel, so 004 alone is well over 85k records
-in these counties (more than everything else combined), and its densest windows time out.
+in Martin, St. Lucie and Palm Beach (more than everything else there combined), and its densest
+windows time out.
 
 How it queries: on this statewide table only CO_NO, OBJECTID, PARCEL_ID, OWN_NAME and the shape
 are indexed (DOR_UC is not), and each county occupies one contiguous OBJECTID block. So the script
@@ -62,6 +66,9 @@ DEFAULT_CODES = (
 CONDO_UNIT_CODE = "004"
 MOBILE_HOME_CODE = "002"
 MIN_PAGE_SIZE = 250
+# Page size that last worked per county: dense counties (Broward, Miami-Dade) time out at the full
+# 2,000, and re-learning that on every window costs minutes of failed attempts.
+_PAGE_HINT: dict[int, int] = {}
 
 OUT_FIELDS = [
     "OBJECTID", "PARCEL_ID", "CO_NO", "DOR_UC", "ASMNT_YR",
@@ -157,7 +164,7 @@ def fetch_window(co: int, lo: int, hi: int, clause: str, cache: Path, refresh: b
     label = f"{COUNTIES[co].name} {lo:,}-{hi - 1:,}"
     feats: list[dict] = []
     offset = 0
-    size = PAGE_SIZE
+    size = _PAGE_HINT.get(co, PAGE_SIZE)
     while True:
         params = {
             "where": f"CO_NO={co} AND OBJECTID>={lo} AND OBJECTID<{hi} AND {clause}",
@@ -173,11 +180,12 @@ def fetch_window(co: int, lo: int, hi: int, clause: str, cache: Path, refresh: b
         if simplify > 0:
             params["maxAllowableOffset"] = repr(simplify)
         try:
-            data = query(params, attempts=3 if size > MIN_PAGE_SIZE else 7, label=label)
+            data = query(params, attempts=2 if size > MIN_PAGE_SIZE else 7, label=label)
         except QueryFailed:
             if size <= MIN_PAGE_SIZE:
                 raise
             size = max(MIN_PAGE_SIZE, size // 2)
+            _PAGE_HINT[co] = min(size, _PAGE_HINT.get(co, PAGE_SIZE))
             print(f"    {label}: retrying offset {offset:,} at {size} records per page", file=sys.stderr, flush=True)
             continue
         page = data.get("features") or []
@@ -377,6 +385,27 @@ def merge_sales(records: dict[tuple[int, str], dict], args, counties: list[int])
             print(f"  {name}: {path.name} has transfers for {len(facts):,} of {len(by_county[co]):,} parcels "
                   f"(records complete from {start})")
 
+        if by_county.get(16):
+            facts, start = county_sales.broward(sorted(by_county[16]), root / "broward" / "transfers.json.gz",
+                                                args.min_sale_price, refresh=args.refresh_sales)
+            for pid, f in facts.items():
+                offer("Broward", (16, pid), f)
+            covered(16, start, "recent5", county_sales.SOURCES[16])
+            print(f"  Broward: transfers for {len(facts):,} of {len(by_county[16]):,} parcels "
+                  f"(records complete from {start})")
+        for co, name, reader, folder in (
+            (23, "Miami-Dade", county_sales.miami_dade, "miami_dade"),
+            (41, "Indian River", county_sales.indian_river, "indian_river"),
+        ):
+            if not by_county.get(co):
+                continue
+            facts = reader(sorted(by_county[co]), root / folder / "latest_transfer.json.gz",
+                           args.min_sale_price, refresh=args.refresh_sales)
+            for pid, f in facts.items():
+                offer(name, (co, pid), f)
+            covered(co, None, "latest", county_sales.SOURCES[co])
+            print(f"  {name}: latest transfer for {len(facts):,} of {len(by_county[co]):,} parcels")
+
     history, starts = load_sdf_history(args.sdf, counties, args.min_sale_price)
     for key, s in history.items():
         offer("SDF", key, SaleFacts(s))
@@ -401,7 +430,7 @@ def merge_sales(records: dict[tuple[int, str], dict], args, counties: list[int])
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--counties", default=",".join(map(str, COUNTY_CODES)), help="FDOR county codes (default 53,60,66)")
+    ap.add_argument("--counties", default=",".join(map(str, COUNTY_CODES)), help="FDOR county codes (default: every county in pa2.config.COUNTIES)")
     ap.add_argument("--codes", default=",".join(DEFAULT_CODES), help="DOR use codes to keep")
     ap.add_argument("--include-condo-units", action="store_true",
                     help=f"also fetch DOR {CONDO_UNIT_CODE} condominium units (one parcel per unit; ~3x the data)")
@@ -421,7 +450,8 @@ def main() -> int:
                          "(Palm Beach is queried from the county GIS and cached in palm_beach/)")
     ap.add_argument("--no-county-sales", action="store_true",
                     help="skip the county sale histories (hold periods then only cover the roll's sales window)")
-    ap.add_argument("--refresh-sales", action="store_true", help="re-query Palm Beach's latest transfers")
+    ap.add_argument("--refresh-sales", action="store_true",
+                    help="re-query the county GIS sale tables (Palm Beach, Broward, Miami-Dade, Indian River)")
     ap.add_argument("--sdf", nargs="*", default=[], metavar="PATH",
                     help="FDOR SDF files of earlier rolls, if you have them (CSV or zips; globs ok)")
     ap.add_argument("--as-of-year", type=int, default=AS_OF_YEAR, help="hold period = this year - last sale year")
@@ -453,6 +483,8 @@ def main() -> int:
     jobs: list[tuple[int, int, int]] = []
     for co in counties:
         n, lo, hi = county_extent(co)
+        if n > 400_000:  # dense counties: full pages time out, so start at half
+            _PAGE_HINT.setdefault(co, PAGE_SIZE // 2)
         windows = [(co, a, min(a + WINDOW, hi + 1)) for a in range(lo, hi + 1, WINDOW)]
         jobs += windows
         print(f"  {co} {COUNTIES[co].name:<11} {n:>8,} parcels in OBJECTID {lo:,}-{hi:,} -> {len(windows)} windows")

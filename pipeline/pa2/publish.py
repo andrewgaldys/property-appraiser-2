@@ -166,6 +166,9 @@ def parcel_index(records: list[dict], addrs_idx: dict[int, dict]) -> dict:
     }
 
 
+# Markets listed per county in the manifest (the sidebar's "jump to a market").
+CITIES_PER_COUNTY = 6
+
 _TRUST = re.compile(r"\b(TRUSTS?|TRUSTEES?|TTEES?|TRS?|REVOCABLE|IRREVOCABLE|ESTATE|EST OF|HEIRS)\b")
 # Business trusts and companies that only contain the words: REITs, banks, real-estate firms.
 _NOT_ESTATE = re.compile(r"\b(REAL ESTATE|REALTY TRUST|INVESTMENT TRUST|REIT|BANK(ING)? (&|AND) TRUST|TRUST BANK|TRUST CO(MPANY)?)\b")
@@ -392,14 +395,15 @@ def publish(
     manifest = build_manifest(records, names_idx, addrs_idx, source_kind=source_kind, source_label=source_label,
                               attribution=attribution, tax_roll_year=tax_roll_year, as_of_year=as_of_year,
                               shard_hex=shard_hex, tiler=tiler, nominal_value_max=nominal_value_max,
-                              sales_coverage=sales_coverage, min_sale_price=min_sale_price, prospect_counts=flags)
+                              sales_coverage=sales_coverage, min_sale_price=min_sale_price, prospect_counts=flags,
+                              index_bytes=index_bytes)
     _dump(out_dir / "manifest.json", manifest)
     return manifest
 
 
 def build_manifest(records, names_idx, addrs_idx, *, source_kind, source_label, attribution, tax_roll_year,
                    as_of_year, shard_hex, tiler, nominal_value_max=NOMINAL_VALUE_MAX, sales_coverage=None,
-                   min_sale_price=100, prospect_counts=None) -> dict:
+                   min_sale_price=100, prospect_counts=None, index_bytes=None) -> dict:
     import shapely
 
     bounds = [round(v, 5) for v in shapely.total_bounds([r["geometry"] for r in records])]
@@ -432,7 +436,14 @@ def build_manifest(records, names_idx, addrs_idx, *, source_kind, source_label, 
     for r in records:
         if r["site_city"]:
             cities[(r["county_code"], r["site_city"].title())].append(r)
-    top_cities = sorted(cities.items(), key=lambda kv: -len(kv[1]))[:10]
+    # Each county's largest markets (not the largest overall: Miami alone would crowd out Vero Beach).
+    per_county: dict[int, list] = defaultdict(list)
+    for key, rs in sorted(cities.items(), key=lambda kv: -len(kv[1])):
+        if re.search(r"\b(COUNTY|UNINCORPORATED)\b", key[1].upper()):  # "St Lucie County": not a market
+            continue
+        if len(per_county[key[0]]) < CITIES_PER_COUNTY:
+            per_county[key[0]].append((key, rs))
+    top_cities = sorted((kv for group in per_county.values() for kv in group), key=lambda kv: -len(kv[1]))
     city_list = []
     for (code, name), rs in top_cities:
         # 2nd-98th percentile box: one mis-coded parcel must not zoom the "jump to" view out to a county.
@@ -503,7 +514,8 @@ def build_manifest(records, names_idx, addrs_idx, *, source_kind, source_label, 
             "fields": TILE_FIELDS,
         },
         "details": {"url": "parcels/{shard}.json", "shard_hex": shard_hex, "hash": "fnv1a32(parcel_id)"},
-        "index": {"url": "index.json", "fields": INDEX_FIELDS},
+        # bytes: the uncompressed size, so the browser can show download progress.
+        "index": {"url": "index.json", "fields": INDEX_FIELDS, **({"bytes": index_bytes} if index_bytes else {})},
         "owners": {"url": "owners/{shard}.json", "shard_hex": shard_hex, "hash": "key % 16^shard_hex",
                    "item_fields": OWNER_ITEM_FIELDS, "max_items": PORTFOLIO_MAX_ITEMS,
                    # Mailing-address keys shared by so many owner names they look like a registered
