@@ -66,7 +66,6 @@ export const DEFAULT_FILTERS: Filters = {
   btlStep: 0,
   includeNominal: false,
   presets: [],
-  market: '',
 };
 
 /** Prospecting presets: plain-language screens a broker runs. Rules: map/layers.ts filterExpr and results.ts matcher. */

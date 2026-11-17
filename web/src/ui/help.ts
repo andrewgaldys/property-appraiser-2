@@ -72,7 +72,6 @@ export class HelpDialog {
         h('li', null, h('b', null, 'Parcels, owners and values: '), `${m.source.label} (the Florida Department of Revenue tax roll joined to county parcel maps). “Assessed market value” is the county’s just value, not an appraisal or an asking price.`),
         h('li', null, h('b', null, 'Years held: '), 'counted from the last sale of $100 or more in the county’s records. Where a county lists only the latest transfer and that one was nominal, the hold shows as a minimum, like “12+ yrs”. No sale on record shows as “Not on record”, never as zero.'),
         h('li', null, h('b', null, 'Owner lookups: '), 'the Sunbiz buttons open the Florida Division of Corporations’ own search. Nothing is copied from it.'),
-        h('li', null, h('b', null, 'Listings: '), 'for-sale and for-lease listings are not public records. A parcel’s Listings section shows them only from sources this site is licensed to use, each with its source and date. With no source connected it says so, and offers a web search for the address instead.'),
         h('li', null, h('b', null, 'Updated: '), `${shortDate(m.generated_at)}. Public records can lag or contain errors: confirm with the county before you rely on a figure.`),
       ),
     );
@@ -109,7 +108,6 @@ export class HelpDialog {
             { class: 'help-notes' },
             h('li', null, 'Each block is one parcel. ', h('b', null, 'Height'), ' is its assessed market value and ', h('b', null, 'color'), ' is its asset class. Change either, the basemap, or see the legend under Map.'),
             h('li', null, h('b', null, 'Click a parcel'), ' for its record: value, size, last sale, years held, the owner and everything else they own.'),
-            h('li', null, 'Once a listing source is connected, a ', h('b', null, 'FOR SALE'), ' or ', h('b', null, 'FOR LEASE'), ' tag and a dashed outline mark every listed parcel, and ', h('b', null, 'On the market'), ' in Filters shows only those.'),
             h('li', null, 'Scroll to zoom. Drag with the right mouse button, or with two fingers, to tilt and turn.'),
             h('li', null, 'Shortcuts: ', h('kbd', null, '/'), ' search, ', h('kbd', null, 'S'), ' satellite lens, ', h('kbd', null, '?'), ' this guide, ', h('kbd', null, 'Esc'), ' close a panel.'),
           ),

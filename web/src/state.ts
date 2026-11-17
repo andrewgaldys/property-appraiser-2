@@ -1,5 +1,4 @@
 import { DEFAULT_FILTERS, PRESET_IDS, STORAGE_KEY, UI_KEY } from './config';
-import { marketValue } from './screens';
 import type { AppState } from './types';
 
 type Listener<T> = (state: T, prev: T) => void;
@@ -40,7 +39,6 @@ export function loadSavedView(): Partial<AppState> {
       const f = { ...DEFAULT_FILTERS, ...v.filters };
       f.includeNominal = f.includeNominal === true;
       f.presets = Array.isArray(f.presets) ? f.presets.filter((p) => PRESET_IDS.includes(p)) : [];
-      f.market = marketValue(f.market);
       out.filters = f;
     }
     if (v.extrude && ['flat', 'value', 'sqft', 'hold'].includes(v.extrude)) out.extrude = v.extrude;

@@ -1,6 +1,5 @@
 import { CLASS_COLORS, CLASS_FALLBACK, CLASS_SHORT, COUNTY_META, DEFAULT_FILTERS, PRESETS } from '../config';
 import { clear, h, icon } from '../dom';
-import { MARKET_LABEL } from '../listings';
 import type { Store } from '../state';
 import type { AppState, Filters, SearchSet } from '../types';
 import { btlLabel, holdLabel, lotLabel } from './filters';
@@ -16,7 +15,6 @@ interface Chip {
 
 function chipsFor(f: Filters, search: SearchSet | null): Chip[] {
   const out: Chip[] = [];
-  if (f.market) out.push({ label: MARKET_LABEL[f.market], title: 'On the market', remove: () => ({ market: '' }) });
   if (search)
     out.push({ label: `${search.label} · ${search.pids.length.toLocaleString('en-US')} ${search.pids.length === 1 ? 'parcel' : 'parcels'}`, title: 'Search results', remove: () => ({}), search: true });
   for (const p of f.presets)

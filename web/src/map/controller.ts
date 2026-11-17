@@ -21,16 +21,11 @@ import type { AppState, Bbox, Manifest, OwnerRow, ParcelRecord, PortfolioItem, T
 import type { Tooltip } from '../ui/tooltip';
 import { BASEMAP_LABEL_ANCHOR, applyBasemap, buildBasemapStyle } from './basemap';
 import {
-  CHIP_LINE,
-  CHIP_SOLID,
   L_3D,
   L_FLAT,
-  L_LABELS,
-  L_LISTED_TAG,
   L_OUTLINE,
   L_POINTS,
   L_RIM,
-  LISTING_LAYERS,
   PARCEL_LAYERS,
   SRC_POLY,
   SRC_PTS,
@@ -39,11 +34,6 @@ import {
   fillOpacity,
   heightExpr,
   layerFilter,
-  listingFilter,
-  listingLayers,
-  listingTagColor,
-  listingTagIcon,
-  listingTagText,
   nominalMax,
   outlineColor,
   outlineWidth,
@@ -161,13 +151,6 @@ export class MapController {
     }
     const before = this.labelAnchor();
     for (const layer of parcelLayers(this.manifest, this.store.get(), this.vector)) this.map.addLayer(layer, before);
-    // Listed parcels: the dashed outline sits on the ground under the 3D blocks, the ring over the dots,
-    // the tags on top of everything the app draws.
-    this.addListingChips();
-    const [edge, ring, tag] = listingLayers(this.manifest, this.store.get(), this.vector);
-    this.map.addLayer(edge!, L_3D);
-    this.map.addLayer(ring!, L_LABELS);
-    this.map.addLayer(tag!, before);
     this.overlay = new SatelliteOverlay(this.map, this.container, this.manifest, this.data);
     this.overlay.onLensChange = (visible) => this.tooltip.setOffset(visible ? Math.round(LENS_RADIUS * 0.72) + 6 : 14);
     this.applyBasemapMode(this.store.get());
@@ -206,7 +189,10 @@ export class MapController {
   // ---------------------------------------------------------------------------
 
   private apply(s: AppState, prev: AppState): void {
-    if (s.filters !== prev.filters || s.search !== prev.search) this.applyFilters(s);
+    if (s.filters !== prev.filters || s.search !== prev.search) {
+      const nominal = nominalMax(this.manifest);
+      for (const id of PARCEL_LAYERS) this.map.setFilter(id, layerFilter(id, s.filters, nominal, s.search));
+    }
     if (s.extrude !== prev.extrude) {
       const flat = s.extrude === 'flat';
       this.map.setLayoutProperty(L_FLAT, 'visibility', flat ? 'visible' : 'none');
@@ -226,51 +212,6 @@ export class MapController {
     if (s.basemap !== prev.basemap || s.lens !== prev.lens || s.shade !== prev.shade) this.applyBasemapMode(s);
     if (s.selection?.pid !== prev.selection?.pid) this.overlay?.setSelected(s.selection?.pid ?? null);
     this.scheduleStats();
-  }
-
-  private applyFilters(s: AppState): void {
-    const nominal = nominalMax(this.manifest);
-    for (const id of PARCEL_LAYERS) this.map.setFilter(id, layerFilter(id, s.filters, nominal, s.search));
-    const listed = listingFilter(s.filters, nominal, s.search);
-    for (const id of LISTING_LAYERS) this.map.setFilter(id, listed);
-  }
-
-  /** The listings index arrived (or changed): redraw which parcels are listed and filtered. */
-  refreshListings(): void {
-    if (!this.ready) return; // onLoad builds the layers from the registry as it then stands
-    this.applyFilters(this.store.get());
-    this.map.setLayoutProperty(L_LISTED_TAG, 'text-field', listingTagText());
-    this.map.setLayoutProperty(L_LISTED_TAG, 'icon-image', listingTagIcon());
-    this.map.setPaintProperty(L_LISTED_TAG, 'text-color', listingTagColor());
-    this.scheduleStats();
-  }
-
-  /** Backgrounds for the listing tags: a solid chip (for sale) and an outlined one (for lease), stretched to fit the text. */
-  private addListingChips(): void {
-    const w = 44;
-    const ht = 32;
-    for (const [id, solid] of [[CHIP_SOLID, true], [CHIP_LINE, false]] as const) {
-      if (this.map.hasImage(id)) continue;
-      const canvas = document.createElement('canvas');
-      canvas.width = w;
-      canvas.height = ht;
-      const g = canvas.getContext('2d');
-      if (!g) return;
-      g.beginPath();
-      g.roundRect(2, 2, w - 4, ht - 4, 8);
-      g.fillStyle = solid ? '#f2f2f2' : 'rgba(10, 10, 10, 0.92)';
-      g.fill();
-      // A dark rim keeps the solid chip readable on a white (selected) parcel; the outlined one is light-rimmed.
-      g.lineWidth = 2;
-      g.strokeStyle = solid ? 'rgba(10, 10, 10, 0.85)' : '#f2f2f2';
-      g.stroke();
-      this.map.addImage(id, g.getImageData(0, 0, w, ht), {
-        pixelRatio: 2,
-        stretchX: [[12, 32]],
-        stretchY: [[12, 20]],
-        content: [10, 8, 34, 24],
-      });
-    }
   }
 
   private applyColors(s: AppState): void {

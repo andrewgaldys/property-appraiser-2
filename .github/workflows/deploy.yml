@@ -7,20 +7,6 @@
 #                       bundle, see README). Unpacked over web/public/data before the build.
 #   VITE_DATA_URL       serve the data bundle from elsewhere (e.g. an R2/S3 bucket) instead.
 #   VITE_BASEMAP_STYLE  replace the built-in OpenFreeMap monochrome basemap with a style URL.
-#
-# Listings (README, "Listings"). Licensed listing feeds are pulled at build time when their
-# credentials are set as repository SECRETS; with none set, the step below does nothing:
-#   RESIMPLIFI_API_KEY                         Resimplifi Serve API
-#   TRESTLE_CLIENT_ID, TRESTLE_CLIENT_SECRET   an MLS feed on Trestle
-#   BRIDGE_SERVER_TOKEN (+ variable BRIDGE_DATASET)   an MLS feed on Bridge
-#   SPARK_ACCESS_TOKEN                         an MLS on Flexmls, through the Spark API
-#   RESO_FEEDS                                 any other MLS's RESO Web API (JSON list, see pipeline/pa2/feeds.py)
-# Every feed that is set up is pulled; a listing carried by several shows once.
-# Repository variables: LISTINGS_REFRESH = on turns on the scheduled rebuilds below;
-# LISTINGS_OPERATOR / LISTINGS_OPERATOR_CONTACT name the brokerage the site shows listings under;
-# MLS_SOURCE_NAME, MLS_DISCLAIMER, MLS_SOURCE_URL, MLS_LOGO_URL (and the same with SPARK_),
-# SPARK_REPLICATION, RESIMPLIFI_SOURCE_NAME, RESIMPLIFI_DISCLAIMER set how the panel names each
-# source, the notice and logo its rules require.
 
 name: Deploy to GitHub Pages
 
@@ -28,10 +14,6 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
-  # Every six hours, to keep listings fresh (MLS display rules ask for 12 hours at most).
-  # The run is skipped unless the repository variable LISTINGS_REFRESH is "on".
-  schedule:
-    - cron: '23 */6 * * *'
 
 permissions:
   contents: read
@@ -44,7 +26,6 @@ concurrency:
 
 jobs:
   build:
-    if: ${{ github.event_name != 'schedule' || vars.LISTINGS_REFRESH == 'on' }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -70,34 +51,6 @@ jobs:
           tar -xzf "$RUNNER_TEMP/pa2-data.tar.gz" -C public/data
           test -f public/data/manifest.json
           du -sh public/data
-
-      # Pulls each licensed listing feed that is set up and matches it to parcels (standard-library
-      # Python, nothing to install). A feed that fails, comes back empty or cannot be matched stops
-      # the job here, so the site keeps its last good deployment instead of losing its listings.
-      - name: Refresh listings from licensed feeds
-        working-directory: ${{ github.workspace }}
-        env:
-          RESIMPLIFI_API_KEY: ${{ secrets.RESIMPLIFI_API_KEY }}
-          TRESTLE_CLIENT_ID: ${{ secrets.TRESTLE_CLIENT_ID }}
-          TRESTLE_CLIENT_SECRET: ${{ secrets.TRESTLE_CLIENT_SECRET }}
-          BRIDGE_SERVER_TOKEN: ${{ secrets.BRIDGE_SERVER_TOKEN }}
-          BRIDGE_DATASET: ${{ vars.BRIDGE_DATASET }}
-          SPARK_ACCESS_TOKEN: ${{ secrets.SPARK_ACCESS_TOKEN }}
-          SPARK_REPLICATION: ${{ vars.SPARK_REPLICATION }}
-          RESO_FEEDS: ${{ secrets.RESO_FEEDS }}
-          LISTINGS_OPERATOR: ${{ vars.LISTINGS_OPERATOR }}
-          LISTINGS_OPERATOR_CONTACT: ${{ vars.LISTINGS_OPERATOR_CONTACT }}
-          MLS_SOURCE_NAME: ${{ vars.MLS_SOURCE_NAME }}
-          MLS_DISCLAIMER: ${{ vars.MLS_DISCLAIMER }}
-          MLS_SOURCE_URL: ${{ vars.MLS_SOURCE_URL }}
-          MLS_LOGO_URL: ${{ vars.MLS_LOGO_URL }}
-          SPARK_SOURCE_NAME: ${{ vars.SPARK_SOURCE_NAME }}
-          SPARK_DISCLAIMER: ${{ vars.SPARK_DISCLAIMER }}
-          SPARK_SOURCE_URL: ${{ vars.SPARK_SOURCE_URL }}
-          SPARK_LOGO_URL: ${{ vars.SPARK_LOGO_URL }}
-          RESIMPLIFI_SOURCE_NAME: ${{ vars.RESIMPLIFI_SOURCE_NAME }}
-          RESIMPLIFI_DISCLAIMER: ${{ vars.RESIMPLIFI_DISCLAIMER }}
-        run: python3 pipeline/fetch_listings.py --if-configured
 
       - name: Install dependencies
         run: npm ci

@@ -46,5 +46,3 @@
   .brief-page { width: auto; min-height: 0; padding: 0; margin: 0; }
   .bp-band, .bp-map img { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
-.bp-market { border-bottom: 1px solid #ccc; }
-.bp-market .bp-pf td.num { text-align: left; white-space: nowrap; }

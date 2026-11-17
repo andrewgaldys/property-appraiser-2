@@ -1,7 +1,6 @@
 import { CLASS_COLORS, CLASS_FALLBACK, CLASS_SHORT, EXTRUDE_MODES, RAMP_NORMAL, SHADE_MODES } from '../config';
 import { appendAll, clear, h } from '../dom';
 import { compact, int, money, pct } from '../format';
-import { hasListings } from '../listings';
 import { shadeStops, type MetricMode } from '../map/layers';
 import type { Store } from '../state';
 import type { AppState, Manifest } from '../types';
@@ -23,7 +22,7 @@ export class Legend {
 
   constructor(
     private manifest: Manifest,
-    private store: Store<AppState>,
+    store: Store<AppState>,
   ) {
     this.body = h('div', { class: 'lg-body' });
     this.el = h('section', { class: 'legend', 'aria-label': 'Map legend' }, h('h3', { class: 'lg-head' }, 'Legend'), this.body);
@@ -31,23 +30,6 @@ export class Legend {
     store.subscribe((s, prev) => {
       if (s.shade !== prev.shade || s.extrude !== prev.extrude || s.selection !== prev.selection) this.render(s);
     });
-  }
-
-  /** The listings index is in: add what listed parcels look like (nothing when none is listed). */
-  setListings(): void {
-    this.render(this.store.get());
-  }
-
-  private listed(): HTMLElement | null {
-    if (!hasListings()) return null;
-    return h(
-      'div',
-      { class: 'lg-listed' },
-      h('span', { class: 'lg-k' }, 'Listed'),
-      h('span', { class: 'lg-chip solid' }, 'FOR SALE'),
-      h('span', { class: 'lg-chip line' }, 'FOR LEASE'),
-      h('span', { class: 'lg-dash', title: 'Dashed outline: a listed parcel' }),
-    );
   }
 
   private classRows(): HTMLElement {
@@ -86,7 +68,7 @@ export class Legend {
       : null;
 
     if (s.shade === 'class') {
-      appendAll(this.body, h('div', { class: 'lg-title' }, 'Asset class'), this.classRows(), height, this.listed(), keys);
+      appendAll(this.body, h('div', { class: 'lg-title' }, 'Asset class'), this.classRows(), height, keys);
       return;
     }
     const mode = s.shade as MetricMode;
@@ -117,7 +99,6 @@ export class Legend {
           ),
       ),
       height,
-      this.listed(),
       keys,
     );
   }
