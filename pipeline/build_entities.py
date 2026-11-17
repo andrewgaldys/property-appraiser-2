@@ -412,9 +412,12 @@ def after_build(parcels: Path, out: Path) -> None:
             "(see pipeline/build_entities.py to add them).")
     else:
         run(cordata, corevent, parcels=parcels, out=out)
-    # Deal signals use the state records when there are any, and every other source regardless.
+    # Debt records (SEC loans already fetched, lien files already downloaded) need the state records'
+    # matches; deal signals use both when there are any, and every other source regardless.
+    from build_debt import run as build_debt
     from build_signals import run as build_signals
 
+    build_debt(parcels=parcels, out=out)
     build_signals(parcels=parcels, out=out)
 
 

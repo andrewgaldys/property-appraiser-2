@@ -357,9 +357,10 @@ export class ResultsPanel {
       const rows = this.open ? this.parcelsTable.sorted() : [...this.parcels].sort((a, b) => (b.jv ?? 0) - (a.jv ?? 0));
       const base = `${window.location.origin}${window.location.pathname}`;
       const ent = await entities(rows.map((r) => r.pid));
+      const debt = this.manifest.debt ? await this.data.debtFor(rows.map((r) => r.pid)).catch(() => undefined) : undefined;
       download(
         `pa2-parcels-${stamp()}.csv`,
-        parcelsCsv(rows, this.manifest.use_codes ?? {}, nominalMax(this.manifest), (pid) => `${base}#p=${pid}`, ent),
+        parcelsCsv(rows, this.manifest.use_codes ?? {}, nominalMax(this.manifest), (pid) => `${base}#p=${pid}`, ent, debt),
       );
       toast(`Exported ${int(rows.length)} ${rows.length === 1 ? 'parcel' : 'parcels'}`);
     }

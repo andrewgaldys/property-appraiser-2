@@ -1,6 +1,6 @@
 import { LONG_HOLD_YEARS, PRESETS, STARTER_SCREENS, UNDERBUILT } from '../config';
 import { int } from '../format';
-import { hasSignalData, isSignalPreset, presetMask, signalPids } from '../signals';
+import { hasSignalData, isSignalPreset, presetAvailable, presetMask, signalPids } from '../signals';
 import { clear, h, icon, toast } from '../dom';
 import { describeScreen, type SavedScreen, type ScreenRepository, type ScreenState } from '../screens';
 import { loadUi, saveUi, type Store } from '../state';
@@ -62,6 +62,19 @@ function signalInfo(id: PresetId, m: Manifest): string {
       return `In the last ${t.recent_transfer_years ?? 10} years the latest transfer was by a lender or in lieu of foreclosure, a forced sale, or by an estate, receiver or trustee (state sale codes 12, 38, 19), or the parcel sold twice within ${t.flip_months ?? 36} months. Sale codes come from Broward's and Martin's histories and every county's latest sale; quick resales need a transfer history, which Miami-Dade and Indian River do not publish.`;
     case 'taxcert':
       return 'A tax certificate is outstanding: the property taxes went unpaid and the county sold (or kept) a lien for them. For now only Palm Beach\'s list of county-held certificates is loaded; the full lists of all six counties have been requested.';
+    case 'loanmat':
+      return `A securitized loan on the property matures within ${t.loan_maturity_months ?? 24} months, or has matured and is still outstanding: the owner has to refinance, extend or sell. Exact dates from the loan reports that public commercial mortgage deals (CMBS) file with the SEC each month${asOf('sec')}.\n\nOnly securitized loans are public. Most commercial mortgages sit with banks and insurers and are never reported, so a parcel left out here may still have a loan coming due.`;
+    case 'distress': {
+      const parts = [
+        src('flr')
+          ? `The owner company has a federal lien in force (IRS tax liens, mostly) on file with Florida's Federal Lien Registry${asOf('flr')}, matched by its exact legal name: not released, withdrawn or expired.`
+          : null,
+        src('sec')
+          ? `A securitized loan on the property is 30 or more days late, in default at maturity, with the special servicer (the lender's workout team), or in foreclosure or lender-owned, per the deal's latest SEC report${asOf('sec')}.`
+          : null,
+      ].filter(Boolean);
+      return `${parts.join(' Or: ')}${src('sec') ? '' : '\n\nLoan trouble from SEC loan reports is not loaded in this bundle.'}`;
+    }
     default:
       return '';
   }
@@ -118,9 +131,14 @@ export class ProspectingPanel {
             'div',
             { class: 'field-label' },
             'Deal signals',
-            infoTip('deal signals', 'From state business records, the tax roll, county sale records, FEMA flood maps and county tax lists. Each parcel shows its signals with the source and date; Help lists every source.'),
+            infoTip(
+              'deal signals',
+              `From state business records, the tax roll, county sale records, FEMA flood maps and county tax lists${
+                manifest.signals?.sources.sec || manifest.signals?.sources.flr ? ', SEC loan reports and the state’s federal lien registry' : ''
+              }. Each parcel shows its signals with the source and date; Help lists every source.`,
+            ),
           ),
-          h('ul', { class: 'presets' }, PRESETS.filter((p) => isSignalPreset(p.id)).map(toggleRow)),
+          h('ul', { class: 'presets' }, PRESETS.filter((p) => isSignalPreset(p.id) && presetAvailable(p.id, manifest)).map(toggleRow)),
         )
       : null;
     this.list = h('ul', { class: 'saved' });

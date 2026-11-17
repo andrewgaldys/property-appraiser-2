@@ -3,6 +3,7 @@ import { appendAll, clear, copyButton, h, icon, type Child } from '../dom';
 import { acres, int, money, moneyFull, parcelId, pct, saleDate, sqft, titleCase } from '../format';
 import type { Manifest, ParcelRecord, Portfolio, PortfolioItem, TileProps } from '../types';
 import type { AerialCard } from './aerial';
+import type { DebtCard } from './debtCard';
 import type { EntityCard } from './entityCard';
 import type { SignalChips } from './signalChips';
 import {
@@ -89,6 +90,7 @@ export class Drawer {
     private aerial: AerialCard,
     private entity: EntityCard | null = null,
     private signalChips: SignalChips | null = null,
+    private debt: DebtCard | null = null,
   ) {
     this.el = root;
     this.top = h('div', { class: 'dr-top' });
@@ -276,6 +278,7 @@ export class Drawer {
               ? h('p', { class: 'cap' }, `${county?.name ?? 'This county'} publishes each parcel’s latest transfer only, so an earlier sale behind a nominal transfer is not on record here.`)
               : null,
         ),
+        this.debt?.enabled ? this.debt.show(r.parcel_id) : null,
         this.ownerSection(r, portfolio, focus),
         this.moreDetails(r),
       ].filter((x): x is HTMLElement => !!x),

@@ -84,6 +84,8 @@ export const PRESETS: { id: PresetId; label: string; chip: string }[] = [
   { id: 'flood', label: 'In a FEMA flood zone', chip: 'Flood zone' },
   { id: 'transfer', label: 'Recent lender, estate or quick resale', chip: 'Lender / estate / resale' },
   { id: 'taxcert', label: 'Tax certificate outstanding', chip: 'Tax certificate' },
+  { id: 'loanmat', label: 'Loan maturing within 24 months', chip: 'Loan maturing' },
+  { id: 'distress', label: 'Legal or debt distress', chip: 'Legal / debt distress' },
 ];
 export const PRESET_IDS = PRESETS.map((p) => p.id);
 
@@ -95,6 +97,8 @@ export const SIGNAL_PRESETS: Partial<Record<PresetId, string[]>> = {
   flood: ['flood_zone'],
   transfer: ['lender_sale', 'estate_sale', 'flip'],
   taxcert: ['tax_certificate'],
+  loanmat: ['loan_maturing'],
+  distress: ['loan_distress', 'federal_lien'],
 };
 
 /**

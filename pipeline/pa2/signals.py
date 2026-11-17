@@ -18,8 +18,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 from .config import (
-    SIGNAL_COAST_MILES, SIGNAL_FLIP_MIN_PRICE, SIGNAL_FLIP_MONTHS, SIGNAL_FUND_EXIT_YEARS, SIGNAL_PRE_CODE_YEAR,
-    SIGNAL_RECENT_TRANSFER_YEARS, SIGNAL_TAX_GAP_MIN,
+    SIGNAL_COAST_MILES, SIGNAL_FLIP_MIN_PRICE, SIGNAL_FLIP_MONTHS, SIGNAL_FUND_EXIT_YEARS, SIGNAL_LOAN_MATURITY_MONTHS,
+    SIGNAL_PRE_CODE_YEAR, SIGNAL_RECENT_TRANSFER_YEARS, SIGNAL_TAX_GAP_MIN,
 )
 
 
@@ -46,6 +46,9 @@ SIGNALS: list[SignalDef] = [
     SignalDef(10, "lender_sale", "Last transfer: lender, foreclosure or forced sale", "transfer", "sales"),
     SignalDef(11, "estate_sale", "Last transfer: estate, receiver or trustee", "transfer", "sales"),
     SignalDef(12, "flip", "Resold within a few years", "transfer", "sales"),
+    SignalDef(13, "loan_maturing", "Loan maturing within 24 months", "debt", "sec"),
+    SignalDef(14, "loan_distress", "Loan late, with the special servicer or in foreclosure", "debt", "sec"),
+    SignalDef(15, "federal_lien", "Federal lien on the owner company", "lien", "flr"),
 ]
 BY_CODE = {s.code: s for s in SIGNALS}
 
@@ -192,6 +195,65 @@ def near_coast(miles: float | None, coast_date: str | None) -> Hit | None:
         return None
     text = "On the coast" if miles < 0.05 else f"{miles:.1f} mi from the coast"
     return Hit("near_coast", text, coast_date, 0.9, {"miles": round(miles, 2)})
+
+
+_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+# Payment statuses (CMBS loan reports): 30-59, 60-89, 90+ days late; matured and not repaid.
+LATE = {"1": "30+ days late", "2": "60+ days late", "3": "90+ days late", "5": "in default at maturity"}
+# Workout strategies that mean the lender is taking or selling the property or the loan.
+WORKOUT_DISTRESS = {"2": "in foreclosure", "3": "borrower in bankruptcy", "5": "note being sold",
+                    "6": "discounted payoff", "7": "lender-owned (REO)", "10": "deed in lieu"}
+
+
+def _month_label(iso: str) -> str:
+    return f"{_MONTHS[int(iso[5:7]) - 1]} {iso[:4]}"
+
+
+def _months_until(iso: str, today: str) -> int:
+    return (int(iso[:4]) - int(today[:4])) * 12 + int(iso[5:7]) - int(today[5:7])
+
+
+def loan_signals(loans: list[dict], today: str) -> list[Hit]:
+    """From the parcel's securitized loans (build_debt.py): maturing soon, and trouble."""
+    hits: list[Hit] = []
+    maturing = [ln for ln in loans if ln.get("mat") and _months_until(ln["mat"], today) <= SIGNAL_LOAN_MATURITY_MONTHS]
+    if maturing:
+        ln = min(maturing, key=lambda x: x["mat"])
+        past = ln["mat"] < today
+        chip = f"Loan {'matured' if past else 'matures'} {_month_label(ln['mat'])}" + (", not yet repaid" if past else "")
+        hits.append(Hit("loan_maturing", chip, ln["mat"], ln.get("conf", 0.9),
+                        {k: ln[k] for k in ("bal", "rate", "deal", "asof") if ln.get(k) is not None}))
+    trouble: list[tuple[int, str, dict]] = []
+    for ln in loans:
+        sc, wc, pc = ln.get("sc"), ln.get("wc"), ln.get("pc")
+        if pc in ("1", "2"):
+            trouble.append((5, "Property in foreclosure" if pc == "1" else "Property lender-owned (REO)", ln))
+        elif wc in WORKOUT_DISTRESS:
+            trouble.append((4, f"Loan workout: {WORKOUT_DISTRESS[wc]}", ln))
+        elif sc in LATE:
+            trouble.append((3, f"Loan {LATE[sc]}", ln))
+        elif ln.get("ss"):
+            trouble.append((2, f"Loan with the special servicer since {_month_label(ln['ss'])}", ln))
+    if trouble:
+        _rank, chip, ln = max(trouble, key=lambda t: t[0])
+        hits.append(Hit("loan_distress", chip, ln.get("ss") or ln.get("asof"), ln.get("conf", 0.9),
+                        {k: ln[k] for k in ("status", "workout", "ss", "deal", "asof") if ln.get(k)}))
+    return hits
+
+
+def lien_signals(liens: list[dict]) -> list[Hit]:
+    """From federal liens on the owner company (build_debt.py), the latest one."""
+    if not liens:
+        return []
+    ln = max(liens, key=lambda x: x.get("filed") or "")
+    n = len(liens)
+    what = "federal tax lien" if all(x.get("tax") for x in liens) else "federal lien"
+    if n > 1:
+        chip = f"{n} {what}s on owner company" + (f" (latest {_month_label(ln['filed'])})" if ln.get("filed") else "")
+    else:
+        chip = f"{what[0].upper()}{what[1:]} on owner company" + (f" ({_month_label(ln['filed'])})" if ln.get("filed") else "")
+    return [Hit("federal_lien", chip, ln.get("filed"), max(x.get("conf", 0.85) for x in liens),
+                {k: ln[k] for k in ("doc", "holder", "how") if ln.get(k)} | ({"count": n} if n > 1 else {}))]
 
 
 def summarize(hits_by_pid: dict[str, list[Hit]], county_of: dict[str, int]) -> dict:

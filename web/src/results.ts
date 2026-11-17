@@ -1,4 +1,5 @@
 import { BTL_STEPS, CLASS_BADGE, COUNTY_META, LONG_HOLD_YEARS, LOT_STEPS_AC, UNDERBUILT } from './config';
+import { DEBT_COLUMNS, debtColumns, type DebtRecord } from './debt';
 import { STATE_LABEL, confidenceLabel, principalsLine, typeLabel, type EntityMatch } from './entities';
 import { entityLabel, sunbizUrl } from './entity';
 import { parcelId } from './format';
@@ -340,6 +341,7 @@ export function parcelsCsv(
   nominal: number,
   link: (pid: string) => string,
   ent?: Map<string, EntityMatch>,
+  debt?: Map<string, DebtRecord>,
 ): string {
   const header = [
     'Parcel ID', 'County', 'Site address', 'City', 'ZIP', 'Asset class', 'Property use', 'Assessed market value',
@@ -349,6 +351,7 @@ export function parcelsCsv(
     'Small portfolio owner', 'Latitude', 'Longitude', 'Link', 'Owner type (from name)', 'Sunbiz lookup',
     ...(signalsReady() ? ['Deal signals'] : []),
     ...(ent ? ENTITY_COLUMNS : []),
+    ...(debt ? DEBT_COLUMNS : []),
   ];
   const out = rows.map((r) => [
     parcelId(r.pid, r.co),
@@ -385,6 +388,7 @@ export function parcelsCsv(
     sunbizUrl(r.own, r.co) || null,
     ...(signalsReady() ? [signalLabels(flagsOf(r.pid)).join('; ') || null] : []),
     ...(ent ? entityColumns(ent.get(r.pid)) : []),
+    ...(debt ? debtColumns(debt.get(r.pid)) : []),
   ]);
   return toCsv(header, out);
 }

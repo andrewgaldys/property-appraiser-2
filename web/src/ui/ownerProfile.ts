@@ -666,7 +666,8 @@ export class OwnerProfile {
     const slug = (this.label || 'owner').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
     // State business records, when the bundle has them: one more set of columns.
     const ent = this.manifest.entities && this.data ? await this.data.entitiesFor(rows.map((r) => r.pid)).catch(() => undefined) : undefined;
-    download(`pa2-${slug}-${stamp()}.csv`, parcelsCsv(rows, this.manifest.use_codes ?? {}, nominalMax(this.manifest), (pid) => `${base}#p=${pid}`, ent));
+    const debt = this.manifest.debt && this.data ? await this.data.debtFor(rows.map((r) => r.pid)).catch(() => undefined) : undefined;
+    download(`pa2-${slug}-${stamp()}.csv`, parcelsCsv(rows, this.manifest.use_codes ?? {}, nominalMax(this.manifest), (pid) => `${base}#p=${pid}`, ent, debt));
     toast(`Exported ${int(rows.length)} ${rows.length === 1 ? 'parcel' : 'parcels'}`);
   }
 

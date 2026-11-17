@@ -98,6 +98,20 @@ export interface Manifest {
   entities?: EntitiesManifest;
   /** Deal signals per parcel (absent until the pipeline's signals stage has run). */
   signals?: SignalsManifest;
+  /** Securitized loans and federal liens per parcel (absent until the pipeline's debt stage has run). */
+  debt?: DebtManifest;
+}
+
+/** Debt records per parcel: see pipeline/build_debt.py. */
+export interface DebtManifest {
+  schema: string;
+  generated_at: string;
+  url: string;
+  shard_hex: number;
+  /** sec: SEC loan reports · flr: Federal Lien Registry · treasury: the 10-year Treasury yield. */
+  sources: Record<string, SignalSource>;
+  parcels: number;
+  per_county: Record<string, number>;
 }
 
 /** One deal signal: its bit in a parcel's mask, its name and the source it comes from. */
@@ -116,6 +130,11 @@ export interface SignalSource {
   file?: string;
   /** Per county code, for sources that come county by county. */
   per_county?: Record<string, string | { file?: string; as_of?: string | null; pulled?: string | null; kind?: string }>;
+  /** A single figure and its date (the 10-year Treasury yield). */
+  value?: number;
+  date?: string;
+  /** SEC loan reports: deals read. */
+  deals?: number;
 }
 
 /** Deal signals: see pipeline/build_signals.py. */
@@ -301,7 +320,7 @@ export type ExtrudeMode = 'flat' | 'value' | 'sqft' | 'hold';
 export type PresetId =
   | 'long' | 'underbuilt' | 'outside' | 'small' | 'trust'
   // Deal signals (data bundle's signals stage): see config SIGNAL_PRESETS.
-  | 'entity' | 'fundexit' | 'taxgap' | 'flood' | 'transfer' | 'taxcert';
+  | 'entity' | 'fundexit' | 'taxgap' | 'flood' | 'transfer' | 'taxcert' | 'loanmat' | 'distress';
 /** Top owners: group parcels by owner name, or by mailing address (reveals sponsors behind single-asset LLCs). */
 export type OwnerGrouping = 'name' | 'addr';
 /** "Color by": asset class (default) or a metric ramp. */

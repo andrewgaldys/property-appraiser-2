@@ -16,6 +16,7 @@ import { ActiveFilters } from './ui/activeFilters';
 import { AerialCard } from './ui/aerial';
 import { Brief } from './ui/brief';
 import { Drawer } from './ui/drawer';
+import { DebtCard } from './ui/debtCard';
 import { EntityCard } from './ui/entityCard';
 import { SignalChips } from './ui/signalChips';
 import { FilterPanel } from './ui/filters';
@@ -173,7 +174,7 @@ async function boot(): Promise<void> {
     onOwnerProfile: () => {
       if (current) void openOwner(refForRecord(current.rec));
     },
-  }, aerial, entityCard, new SignalChips(data, manifest));
+  }, aerial, entityCard, new SignalChips(data, manifest), new DebtCard(data, manifest));
 
   // Owner profile: the drawer-sized panel the parcel drawer opens on top of.
   const profile = new OwnerProfile(manifest, {

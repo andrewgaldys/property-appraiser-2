@@ -791,10 +791,17 @@ body.drawer-open .hint, body.profile-open .hint { display: none; }
 .ent-rel .op-ent-n { margin-top: 1px; }
 .ent-more { margin-top: 8px; }
 
+/* ---- Debt & liens ------------------------------------------------------------------------------- */
+.debt { display: grid; gap: 10px; }
+.debt-state { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; border: 1px solid var(--line-strong); border-radius: var(--r-sm); font-size: 13px; font-weight: 600; color: var(--text); }
+.debt-state.mid { color: var(--text-2); }
+.debt-state.bad { border-color: var(--warn); color: var(--warn); }
+.debt-item abbr { text-decoration: underline dotted; text-underline-offset: 2px; cursor: help; }
+
 /* ---- Deal signals ------------------------------------------------------------------------------- */
 .signals.deal { margin-top: 8px; }
 .signals.deal li { border-color: var(--line-strong); color: var(--text); }
-.signals.deal li.sg-entity, .signals.deal li.sg-tax, .signals.deal li.sg-transfer { border-color: var(--warn); }
+.signals.deal li.sg-entity, .signals.deal li.sg-tax, .signals.deal li.sg-transfer, .signals.deal li.sg-debt, .signals.deal li.sg-lien { border-color: var(--warn); }
 .op-signals { margin: 14px 24px 0; }
 .sg-n { color: var(--muted); }
 .switch-count { margin-left: 6px; font: 12.5px var(--mono); color: var(--muted); }

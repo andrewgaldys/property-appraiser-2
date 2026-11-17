@@ -62,9 +62,9 @@ INDEX_FIELDS = [
     "sp", "sy", "sm", "hold", "hf", "sfrom", "onk", "oak", "ma1", "ma2", "mcity", "mst", "mzip", "lon", "lat",
     "oa", "spf", "et",
 ]
-# "entities" (Sunbiz records, build_entities.py) and "signals" (build_signals.py) belong to one build's
-# parcels: a rebuild removes them, and the build scripts add them back for the new roll.
-_ARTIFACT_DIRS = ("parcels", "owners", "entities", "signals")
+# "entities" (Sunbiz records, build_entities.py), "debt" (build_debt.py) and "signals" (build_signals.py)
+# belong to one build's parcels: a rebuild removes them, and the build scripts add them back for the new roll.
+_ARTIFACT_DIRS = ("parcels", "owners", "entities", "debt", "signals")
 
 
 def _dump(path: Path, obj) -> int:

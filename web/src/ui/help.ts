@@ -1,4 +1,5 @@
 import { COUNTY_META } from '../config';
+import { debtNote } from '../debt';
 import { extLink, h, icon } from '../dom';
 import { int, money, shortDate } from '../format';
 import type { Manifest, SalesCoverage } from '../types';
@@ -90,6 +91,7 @@ export class HelpDialog {
                 .join('; ') + '.',
             )
           : null,
+        m.debt ? h('li', null, h('b', null, m.debt.sources.sec ? 'Debt & liens: ' : 'Liens: '), debtNote(m)) : null,
         h('li', null, h('b', null, 'Owner lookups: '), 'the Sunbiz buttons open the Florida Division of Corporations’ own search. The app never queries it.'),
         h('li', null, h('b', null, 'Updated: '), `${shortDate(m.generated_at)}. Public records can lag or contain errors: confirm with the county before you rely on a figure.`),
       ),

@@ -53,7 +53,8 @@ pipeline/
   fetch_real_tricounty_parcels.py  Florida Statewide Cadastral -> web/public/data (what the site ships)
   build_fdor.py                    alternative: FDOR NAL + SDF + parcel polygon files -> web/public/data
   build_entities.py                Sunbiz quarterly files + the joined roll -> web/public/data/entities (state business records)
-  build_signals.py                 deal signals (entity status, holds, values, flood, coast, tax certificates) -> web/public/data/signals
+  build_debt.py                    securitized loans (SEC CMBS reports) and federal liens (state registry) -> web/public/data/debt
+  build_signals.py                 deal signals (entity status, holds, values, flood, coast, tax certificates, debt) -> web/public/data/signals
   generate_sample_data.py          synthetic sample -> web/public/data (+ --emit-raw: FDOR-format test files)
   build_tiles.py                   re-tile from pipeline/out/parcels.parquet (e.g. after installing tippecanoe)
   sync_postgis.py                  optional: load the joined table into PostGIS / Supabase
@@ -345,12 +346,32 @@ Opening a parcel shows a **Look up on Sunbiz** button under the owner, and again
 | Tax certificate | A certificate outstanding on the parcel | County Tax Collector lists (Palm Beach county-held so far) |
 | Lender or forced sale; estate, receiver or trustee | Latest transfer in the last 10 years with state sale code 12 or 38; code 19 | Broward and Martin histories, every county's latest sale |
 | Quick resale | Two sales of $10,000+ within 36 months, the later one in the last 10 years | Transfer histories (Palm Beach, Martin, St. Lucie, Broward) |
+| Loan maturing within 24 months | A securitized loan on the parcel matures within 24 months of today, or has matured and is still owed | SEC CMBS loan reports (see Debt & liens) |
+| Loan in trouble | 30+ days late, in default at maturity, with the special servicer, in a foreclosure / REO / bankruptcy / note-sale / deed-in-lieu workout, or the property in foreclosure or lender-owned | SEC CMBS loan reports |
+| Federal lien on the owner | A lien in force (not released, withdrawn or expired) against the owner company, matched by exact legal name; IRS tax liens, mostly | Florida Federal Lien Registry |
 
 **Getting the files.** FEMA flood maps: `https://msc.fema.gov/portal/downloadProduct?productID=NFHL_<county FIPS>C` into `pipeline/raw/fema/<FIPS>/` (12011 Broward, 12086 Miami-Dade, 12099 Palm Beach, 12085 Martin, 12111 St. Lucie, 12061 Indian River). Coastline: `tl_<year>_us_coastline.zip` from census.gov into `pipeline/raw/coastline/`. Tax certificates: each Tax Collector's list into `pipeline/raw/tax/<county>/` (Palm Beach posts its county-held certificates as an Excel file; the rest come by records request). A missing source skips its signals and the report says so.
 
 **In the app.** The Filters panel's *Owner signals* step adds a *Deal signals* group of presets (owner company dissolved or lapsed, fund exit window, taxes rising, flood zone, recent lender/estate/quick resale, tax certificate), with each one's parcel count; they combine with every other filter. A parcel shows its signal chips under the key facts (hover for source, record date and confidence); the owner profile counts each signal across the owner's parcels; both CSV exports add a *Deal signals* column. Signals are not in the map tiles yet: a signal preset filters the map by parcel ID.
 
 **Not yet.** Year-over-year value jumps need the prior-year rolls (requested from the Department of Revenue); tax delinquency covers only Palm Beach's county-held certificates until the six Tax Collectors' lists arrive.
+
+## Debt & liens
+
+[pipeline/build_debt.py](pipeline/build_debt.py) adds what public records state exactly about a parcel's debt; nothing is estimated (no guessed maturities, rates or balances).
+
+- **Securitized loans (CMBS).** Every public commercial mortgage deal files its loans with the SEC each month (Form ABS-EE, Exhibit 102: Regulation AB Schedule AL): property address, origination and maturity date, rate, balance, payment status, special servicing, workout, DSCR and occupancy. `--fetch` reads each deal's latest report from EDGAR's daily indexes (the last `SEC_LOOKBACK_DAYS`, 40 by default), skipping other asset classes (autos, cards, leases) after their first few bytes, at about four requests a second, and caches every response in `pipeline/raw/sec/`. EDGAR asks automated clients for a contact: set `SEC_USER_AGENT="Your Name you@example.com"` in your shell; it is read from the environment and never written to a file. Florida properties are placed on parcels by street address (the ZIP decides, then the city; never a guess between different owners) and checked against the parcel's year built and floor area; matches below `DEBT_MIN_CONFIDENCE` (0.75) go to the report, not the app. Defeased, released and substituted properties are left out, and a loan split across several deals shows once, with the pieces' balances added.
+- **Federal liens on owner companies.** Florida's Federal Lien Registry (liens against corporations and partnerships headquartered in Florida; IRS tax liens, mostly) comes with the Division of Corporations' quarterly data: `doc > quarterly > flr` on sftp.floridados.gov, the files `flrf`, `flrd`, `flrs` and `flre` into `pipeline/raw/sunbiz/`. Active, unexpired filings are matched to the owners' state business records by exact legal name; a filing older than the company is skipped (an earlier company of the same name), and the address, where it agrees, raises the confidence.
+- **Context.** The latest 10-year Treasury yield (`pipeline/raw/rates/DGS10.csv`, from FRED) is shown next to loan rates.
+
+```bash
+SEC_USER_AGENT="Your Name you@example.com" python pipeline/build_debt.py --fetch --signals   # fetch, match, publish, rebuild signals
+python pipeline/build_debt.py                                                                 # match what is cached and downloaded
+```
+
+Outputs: `pipeline/out/debt/` (`cmbs_fl.json`, the Florida loans; `loans.csv` and `loans_unmatched.csv`, every property and why it did or did not match; `liens.csv`; `report.json`, counts per county) and `web/public/data/debt/<shard>.json` with `manifest.json` "debt". A data build runs it (without fetching) between the state records and the signals.
+
+**In the app.** A parcel with a securitized loan or a federal lien gets a *Debt & liens* section: the loan's standing, maturity (and any extension), balance, rate, special servicer, DSCR, occupancy, lender, the deal or deals holding it with the report date and a link to the SEC filing, and how the parcel was matched. The Filters panel adds *Loan maturing within 24 months* (shown once SEC loans are loaded) and *Legal or debt distress*; the parcel CSV exports add loan and lien columns. Most commercial loans sit with banks and insurers and are never reported publicly, so most parcels show no loan.
 
 ## Top owners on the map
 

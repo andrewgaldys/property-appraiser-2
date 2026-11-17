@@ -36,6 +36,12 @@ export function maskOf(codes: string[]): number {
 export const isSignalPreset = (id: PresetId): boolean => id in SIGNAL_PRESETS;
 export const presetMask = (id: PresetId): number => maskOf(SIGNAL_PRESETS[id] ?? []);
 
+/** A signal preset is offered when the bundle defines one of its signals and loaded that signal's source. */
+export function presetAvailable(id: PresetId, m: Manifest): boolean {
+  const codes = SIGNAL_PRESETS[id] ?? [];
+  return defs.some((d) => codes.includes(d.code) && !!m.signals?.sources[d.source]);
+}
+
 export function flagsOf(pid: string): number {
   return flags?.get(pid) ?? 0;
 }

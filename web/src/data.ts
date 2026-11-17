@@ -1,5 +1,6 @@
 import type { GeoJSONSourceSpecification } from '@maplibre/maplibre-gl-style-spec';
 import { RESIDENTIAL_CLASSES } from './config';
+import type { DebtRecord } from './debt';
 import { toEntity, type EntityLink, type EntityMatch, type EntityRecord, type PrincipalGroup } from './entities';
 import { buildIndex, type ParcelIndex, type RawIndex } from './parcelIndex';
 import type { SignalHit } from './signals';
@@ -173,6 +174,32 @@ export class DataStore {
       conf: Number(r[at('conf')] ?? 0),
       facts: (r[at('facts')] as Record<string, unknown> | null) ?? null,
     }));
+  }
+
+  // ---- Debt records (manifest.debt) ------------------------------------------------------------
+
+  private debtShards = new Map<string, Promise<{ rows: Record<string, DebtRecord> }>>();
+
+  /** One parcel's securitized loans and federal liens; null when it has none on record. */
+  async debt(pid: string): Promise<DebtRecord | null> {
+    const spec = this.manifest.debt;
+    if (!spec) return null;
+    const shard = fnv1a32(pid).slice(0, spec.shard_hex);
+    const s = await this.cached(this.debtShards, shard, () => this.json<{ rows: Record<string, DebtRecord> }>(spec.url.replace('{shard}', shard)));
+    return s.rows[pid] ?? null;
+  }
+
+  /** Debt records for many parcels at once (exports): one fetch per shard. */
+  async debtFor(pids: string[]): Promise<Map<string, DebtRecord>> {
+    const out = new Map<string, DebtRecord>();
+    if (!this.manifest.debt) return out;
+    await Promise.all(
+      pids.map(async (pid) => {
+        const d = await this.debt(pid);
+        if (d) out.set(pid, d);
+      }),
+    );
+    return out;
   }
 
   // ---- Sunbiz records (manifest.entities) ------------------------------------------------------

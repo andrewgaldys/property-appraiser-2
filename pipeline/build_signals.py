@@ -8,6 +8,7 @@ Inputs (only the parcel table is required; a missing source skips its signals an
   pipeline/raw/fema/<fips>/NFHL_<fips>C.zip        FEMA flood zones, one file per county (msc.fema.gov)
   pipeline/raw/coastline/tl_*_us_coastline.zip     the Census coastline
   pipeline/raw/tax/palm_beach/County_Certs_*.xlsx  Palm Beach county-held tax certificates (pbctax.gov)
+  pipeline/out/debt/parcel_debt.json               securitized loans and federal liens (build_debt.py)
 
     python pipeline/build_signals.py                # compute, report, publish into web/public/data
     python pipeline/build_signals.py --no-publish   # compute and report only (pipeline/out/signals/)
@@ -46,14 +47,15 @@ from pa2 import signals as G  # noqa: E402
 from pa2 import sunbiz  # noqa: E402
 from pa2.config import (  # noqa: E402
     AS_OF_YEAR, COUNTIES, NOMINAL_VALUE_MAX, OUT_DIR, RAW_DIR, SIGNAL_COAST_MILES, SIGNAL_FLIP_MIN_PRICE,
-    SIGNAL_FLIP_MONTHS, SIGNAL_FUND_EXIT_YEARS, SIGNAL_PRE_CODE_YEAR, SIGNAL_RECENT_TRANSFER_YEARS,
-    SIGNAL_TAX_GAP_MIN, WEB_DATA_DIR,
+    SIGNAL_FLIP_MONTHS, SIGNAL_FUND_EXIT_YEARS, SIGNAL_LOAN_MATURITY_MONTHS, SIGNAL_PRE_CODE_YEAR,
+    SIGNAL_RECENT_TRANSFER_YEARS, SIGNAL_TAX_GAP_MIN, WEB_DATA_DIR,
 )
 from pa2.util import fnv1a32, norm_parcel_id  # noqa: E402
 
 WORK = OUT_DIR / "signals"
 PARCELS = OUT_DIR / "parcels.parquet"
 ENTITIES = OUT_DIR / "sunbiz" / "parcel_entities.csv"
+DEBT = OUT_DIR / "debt"
 DETAIL_FIELDS = ["code", "chip", "date", "conf", "facts"]
 FLORIDA_ALBERS = "EPSG:3086"  # NAD83 / Florida GDL Albers, metres
 METRES_PER_MILE = 1609.344
@@ -354,6 +356,18 @@ def tax_certificates(pids: set[str]) -> tuple[dict[str, dict], dict[str, dict]]:
     return out, sources
 
 
+def load_debt(pids: set[str]) -> tuple[dict[str, dict], dict[str, dict]]:
+    """Securitized loans and federal liens per parcel, and their sources (build_debt.py's last run)."""
+    path, rep = DEBT / "parcel_debt.json", DEBT / "report.json"
+    if not path.exists():
+        log("  no debt records (python pipeline/build_debt.py): loan and lien signals skipped")
+        return {}, {}
+    debt = {pid: v for pid, v in json.loads(path.read_text()).items() if pid in pids}
+    sources = json.loads(rep.read_text()).get("sources", {}) if rep.exists() else {}
+    log(f"  debt records for {len(debt):,} parcels")
+    return debt, {k: v for k, v in sources.items() if k in ("sec", "flr", "treasury")}
+
+
 # ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
@@ -394,6 +408,7 @@ def run(*, parcels: Path = PARCELS, out: Path = WEB_DATA_DIR, publish: bool = Tr
     flood, fema_sources = flood_zones(gdf)
     coast, coast_source = coast_distance(gdf)
     certs, tax_sources = tax_certificates(pids)
+    debt, debt_sources = load_debt(pids)
 
     hits: dict[str, list[G.Hit]] = {}
     this_year = AS_OF_YEAR
@@ -430,6 +445,10 @@ def run(*, parcels: Path = PARCELS, out: Path = WEB_DATA_DIR, publish: bool = Tr
             h.append(G.Hit("tax_certificate", chip, src.get("as_of"), 0.95,
                            {"count": c["count"], **({"amount": round(c["amount"])} if c["amount"] else {}),
                             **({"certs": c["certs"][:5]} if c["certs"] else {})}))
+        d = debt.get(pid)
+        if d:
+            h += G.loan_signals(d.get("loans", []), TODAY)
+            h += G.lien_signals(d.get("liens", []))
         if h:
             hits[pid] = h
 
@@ -442,6 +461,7 @@ def run(*, parcels: Path = PARCELS, out: Path = WEB_DATA_DIR, publish: bool = Tr
         "fema": {"label": "FEMA National Flood Hazard Layer", "per_county": fema_sources},
         "coastline": {"label": "U.S. Census TIGER/Line coastline", **(coast_source or {})},
         "tax": {"label": "County Tax Collector certificate lists", "per_county": tax_sources},
+        **debt_sources,
     }
     report = {
         "generated_at": dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat(),
@@ -469,7 +489,7 @@ def thresholds() -> dict:
         "fund_exit_years": list(SIGNAL_FUND_EXIT_YEARS), "tax_gap_min": SIGNAL_TAX_GAP_MIN,
         "flip_months": SIGNAL_FLIP_MONTHS, "flip_min_price": SIGNAL_FLIP_MIN_PRICE,
         "recent_transfer_years": SIGNAL_RECENT_TRANSFER_YEARS, "pre_code_year": SIGNAL_PRE_CODE_YEAR,
-        "coast_miles": SIGNAL_COAST_MILES,
+        "coast_miles": SIGNAL_COAST_MILES, "loan_maturity_months": SIGNAL_LOAN_MATURITY_MONTHS,
     }
 
 

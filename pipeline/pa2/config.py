@@ -197,6 +197,17 @@ SIGNAL_RECENT_TRANSFER_YEARS = int(os.environ.get("SIGNAL_RECENT_TRANSFER_YEARS"
 SIGNAL_PRE_CODE_YEAR = int(os.environ.get("SIGNAL_PRE_CODE_YEAR", "2002"))
 # "Near the coast": within this many miles of the Census coastline.
 SIGNAL_COAST_MILES = float(os.environ.get("SIGNAL_COAST_MILES", "1.0"))
+# A securitized loan that matures within this many months of its latest report (or has matured).
+SIGNAL_LOAN_MATURITY_MONTHS = int(os.environ.get("SIGNAL_LOAN_MATURITY_MONTHS", "24"))
+
+# Debt and liens (pipeline/build_debt.py): free, exact public records only. Each can be overridden with
+# the environment variable of the same name.
+# SEC ABS-EE filings are monthly per deal: look back far enough to see every active deal's latest one.
+SEC_LOOKBACK_DAYS = int(os.environ.get("SEC_LOOKBACK_DAYS", "40"))
+# Seconds between requests to sec.gov (its fair-access limit is 10 a second).
+SEC_REQUEST_INTERVAL = float(os.environ.get("SEC_REQUEST_INTERVAL", "0.25"))
+# A loan's property placed on a parcel below this confidence is reported, not published.
+DEBT_MIN_CONFIDENCE = float(os.environ.get("DEBT_MIN_CONFIDENCE", "0.75"))
 
 # Sunbiz (Florida Division of Corporations) entity matching, see pa2/sunbiz.py. Each can be overridden
 # with the environment variable of the same name.
