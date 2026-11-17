@@ -3,6 +3,7 @@ import { STATE_LABEL, confidenceLabel, principalsLine, typeLabel, type EntityMat
 import { entityLabel, sunbizUrl } from './entity';
 import { parcelId } from './format';
 import { mailingLine, type IndexRow, type ParcelIndex } from './parcelIndex';
+import { flagsOf, isSignalPreset, presetMask, signalLabels, signalsReady } from './signals';
 import type { Bbox, Filters, OwnerGrouping, OwnerRef, OwnerRow, SearchSet, TileProps, ViewStats } from './types';
 
 /**
@@ -104,6 +105,7 @@ export function matcher(f: Filters, search: SearchSet | null, nominal: number, v
   const lot = (LOT_STEPS_AC[f.lotStep] ?? 0) * 43560;
   const btl = BTL_STEPS[f.btlStep] ?? Infinity;
   const pre = new Set(f.presets);
+  const signalMasks = f.presets.filter(isSignalPreset).map(presetMask);
   return (r) => {
     if (pids && !pids.has(r.pid)) return false;
     if (counties && !counties.has(r.co)) return false;
@@ -121,6 +123,7 @@ export function matcher(f: Filters, search: SearchSet | null, nominal: number, v
       if (pre.has('outside') && (r.oa ?? 0) < 1) return false;
       if (pre.has('small') && r.spf !== 1) return false;
       if (pre.has('trust') && r.et !== 1) return false;
+      for (const m of signalMasks) if (!(flagsOf(r.pid) & m)) return false;
     }
     if (view && (r.lon < view[0] || r.lon > view[2] || r.lat < view[1] || r.lat > view[3])) return false;
     return true;
@@ -297,7 +300,7 @@ export function ownersCsv(ix: ParcelIndex, groups: OwnerResult[], grouping: Owne
     'Building SF (matching)', 'Residential units (matching)', 'Asset classes', 'Longest hold (years)', 'Average hold (years, known holds)',
     'Mailing address 1', 'Mailing address 2', 'Mailing city', 'Mailing state', 'Mailing ZIP', 'Other mailing addresses',
     'Out-of-area owner', 'Estate or trust', 'Small portfolio owner', 'Largest property', 'Largest property city', 'Grouped by',
-    'Owner type (from name)', 'Sunbiz lookup', ...(ent ? ENTITY_COLUMNS : []),
+    'Owner type (from name)', 'Sunbiz lookup', ...(signalsReady() ? ['Deal signals'] : []), ...(ent ? ENTITY_COLUMNS : []),
   ];
   const rows = groups.map((g) => [
     g.label,
@@ -324,6 +327,7 @@ export function ownersCsv(ix: ParcelIndex, groups: OwnerResult[], grouping: Owne
     g.ref.kind === 'a' ? 'Mailing address' : g.ref.kind === 'n' ? 'Owner name' : grouping === 'addr' ? 'Single parcel' : 'Owner name',
     entityLabel(g.label) || null,
     sunbizUrl(g.label, g.top.co) || null,
+    ...(signalsReady() ? [signalLabels(g.rows.reduce((m, r) => m | flagsOf(r.pid), 0)).join('; ') || null] : []),
     // An address group holds several owners: its largest property's owner stands for it.
     ...(ent ? entityColumns(ent.get(g.top.pid)) : []),
   ]);
@@ -343,6 +347,7 @@ export function parcelsCsv(
     'Last sale date', 'Last sale price', 'Years held', 'Owner name', 'Mailing address 1', 'Mailing address 2',
     'Mailing city', 'Mailing state', 'Mailing ZIP', 'Mailing address (one line)', 'Out-of-area owner', 'Estate or trust',
     'Small portfolio owner', 'Latitude', 'Longitude', 'Link', 'Owner type (from name)', 'Sunbiz lookup',
+    ...(signalsReady() ? ['Deal signals'] : []),
     ...(ent ? ENTITY_COLUMNS : []),
   ];
   const out = rows.map((r) => [
@@ -378,6 +383,7 @@ export function parcelsCsv(
     link(r.pid),
     entityLabel(r.own) || null,
     sunbizUrl(r.own, r.co) || null,
+    ...(signalsReady() ? [signalLabels(flagsOf(r.pid)).join('; ') || null] : []),
     ...(ent ? entityColumns(ent.get(r.pid)) : []),
   ]);
   return toCsv(header, out);

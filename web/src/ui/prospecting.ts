@@ -1,4 +1,6 @@
 import { LONG_HOLD_YEARS, PRESETS, STARTER_SCREENS, UNDERBUILT } from '../config';
+import { int } from '../format';
+import { hasSignalData, isSignalPreset, presetMask, signalPids } from '../signals';
 import { clear, h, icon, toast } from '../dom';
 import { describeScreen, type SavedScreen, type ScreenRepository, type ScreenState } from '../screens';
 import { loadUi, saveUi, type Store } from '../state';
@@ -34,6 +36,34 @@ function presetInfo(id: PresetId, m: Manifest): string {
       return `The owner name holds ${prospectingRules(m).small[0]} to ${prospectingRules(m).small[1]} parcels across ${area(m).the}, all in one asset class (grouped by owner name, not mailing address).`;
     case 'trust':
       return 'The owner name reads as a trust or an estate: TRUST, TRUSTEE, TR, ESTATE OF and the like. Land trusts count; REITs, banks and real-estate companies do not.';
+    default:
+      return signalInfo(id, m);
+  }
+}
+
+/** Deal-signal presets, in plain language, with the thresholds and sources the bundle used. */
+function signalInfo(id: PresetId, m: Manifest): string {
+  const sg = m.signals;
+  const t = (sg?.thresholds ?? {}) as Record<string, number | number[]>;
+  const src = (k: string) => sg?.sources[k];
+  const asOf = (k: string) => (src(k)?.as_of ? ` (${src(k)!.as_of})` : '');
+  switch (id) {
+    case 'entity':
+      return `The owner's company is administratively dissolved (usually for a missed annual report), inactive (dissolved, merged or withdrawn), or this year's annual report is overdue, per the Division of Corporations' quarterly file${asOf('sunbiz')}. Only owners matched to a state record with enough confidence count.`;
+    case 'fundexit': {
+      const [lo, hi] = (t.fund_exit_years as number[]) ?? [5, 7];
+      return `Last priced sale ${lo} to ${hi} years ago (an exact hold, not a minimum) and the owner is a company (LLC, corporation or partnership): the years in which many funds and syndicates sell or refinance.`;
+    }
+    case 'taxgap':
+      return `The capped assessed value is at least ${Math.round(Number(t.tax_gap_min ?? 0.3) * 100)}% below the market (just) value on the ${src('roll')?.as_of ?? ''} roll. Florida limits increases on non-homestead property to 10% a year, so taxes keep rising toward market value, and a sale resets the assessment to market for the buyer.`;
+    case 'flood':
+      return "Half or more of the lot, or its center, lies in FEMA's 1% annual-chance flood zone (A or V zones), per the National Flood Hazard Layer. Rising flood insurance pushes some owners to sell; buildings older than the 2002 building code are flagged on the parcel.";
+    case 'transfer':
+      return `In the last ${t.recent_transfer_years ?? 10} years the latest transfer was by a lender or in lieu of foreclosure, a forced sale, or by an estate, receiver or trustee (state sale codes 12, 38, 19), or the parcel sold twice within ${t.flip_months ?? 36} months. Sale codes come from Broward's and Martin's histories and every county's latest sale; quick resales need a transfer history, which Miami-Dade and Indian River do not publish.`;
+    case 'taxcert':
+      return 'A tax certificate is outstanding: the property taxes went unpaid and the county sold (or kept) a lien for them. For now only Palm Beach\'s list of county-held certificates is loaded; the full lists of all six counties have been requested.';
+    default:
+      return '';
   }
 }
 
@@ -53,6 +83,7 @@ export class ProspectingPanel {
   private sum: HTMLElement;
   private savedSum: HTMLElement;
   private toggles = new Map<PresetId, HTMLInputElement>();
+  private counts = new Map<PresetId, HTMLElement>();
   private list: HTMLElement;
   private form: HTMLElement;
   private nameInput: HTMLInputElement;
@@ -66,20 +97,32 @@ export class ProspectingPanel {
     private handlers: ProspectingHandlers,
   ) {
     this.sum = h('span', { class: 'sec-sum' });
-    const presets = h(
-      'ul',
-      { class: 'presets' },
-      PRESETS.map((p) => {
-        const input = h('input', { type: 'checkbox', role: 'switch', onchange: () => this.toggle(p.id, input.checked) }) as HTMLInputElement;
-        this.toggles.set(p.id, input);
-        return h(
-          'li',
-          null,
-          h('label', { class: 'switch' }, input, h('span', { class: 'switch-track', 'aria-hidden': 'true' }), h('span', { class: 'switch-label' }, p.label)),
-          infoTip(p.label.toLowerCase(), () => presetInfo(p.id, manifest)),
-        );
-      }),
-    );
+    const toggleRow = (p: (typeof PRESETS)[number]) => {
+      const input = h('input', { type: 'checkbox', role: 'switch', onchange: () => this.toggle(p.id, input.checked) }) as HTMLInputElement;
+      this.toggles.set(p.id, input);
+      const count = h('span', { class: 'switch-count' });
+      this.counts.set(p.id, count);
+      return h(
+        'li',
+        null,
+        h('label', { class: 'switch' }, input, h('span', { class: 'switch-track', 'aria-hidden': 'true' }), h('span', { class: 'switch-label' }, p.label, count)),
+        infoTip(p.label.toLowerCase(), () => presetInfo(p.id, manifest)),
+      );
+    };
+    const presets = h('ul', { class: 'presets' }, PRESETS.filter((p) => !isSignalPreset(p.id)).map(toggleRow));
+    const signals = hasSignalData(manifest)
+      ? h(
+          'div',
+          { class: 'deal-signals' },
+          h(
+            'div',
+            { class: 'field-label' },
+            'Deal signals',
+            infoTip('deal signals', 'From state business records, the tax roll, county sale records, FEMA flood maps and county tax lists. Each parcel shows its signals with the source and date; Help lists every source.'),
+          ),
+          h('ul', { class: 'presets' }, PRESETS.filter((p) => isSignalPreset(p.id)).map(toggleRow)),
+        )
+      : null;
     this.list = h('ul', { class: 'saved' });
     this.nameInput = h('input', {
       type: 'text',
@@ -115,6 +158,7 @@ export class ProspectingPanel {
         { class: 'sec-body' },
         h('p', { class: 'cap pre-cap' }, 'Signs an owner may be ready to talk. Turn on any mix: a parcel must match them all.'),
         presets,
+        signals,
       ),
     ) as HTMLDetailsElement;
     this.el.open = stored.prospecting !== false;
@@ -168,6 +212,11 @@ export class ProspectingPanel {
       if (s.filters !== prev.filters) this.sync(s);
     });
     void this.refresh();
+  }
+
+  /** Once the signal masks have loaded: how many parcels each signal preset holds. */
+  signalsLoaded(): void {
+    for (const [id, el] of this.counts) if (isSignalPreset(id)) el.textContent = int(signalPids(presetMask(id)).length);
   }
 
   private toggle(id: PresetId, on: boolean): void {

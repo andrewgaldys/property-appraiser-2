@@ -77,8 +77,25 @@ export const PRESETS: { id: PresetId; label: string; chip: string }[] = [
   { id: 'outside', label: 'Out-of-area owners', chip: 'Out-of-area owner' },
   { id: 'small', label: 'Small portfolio owners', chip: 'Small portfolio' },
   { id: 'trust', label: 'Estate / trust owned', chip: 'Estate / trust' },
+  // Deal signals: shown when the data bundle has them (manifest.signals).
+  { id: 'entity', label: 'Owner company dissolved or lapsed', chip: 'Company dissolved / lapsed' },
+  { id: 'fundexit', label: 'Fund exit window (held 5-7 yrs, company owner)', chip: 'Fund exit window' },
+  { id: 'taxgap', label: 'Taxes rising (assessed well below market)', chip: 'Taxes rising' },
+  { id: 'flood', label: 'In a FEMA flood zone', chip: 'Flood zone' },
+  { id: 'transfer', label: 'Recent lender, estate or quick resale', chip: 'Lender / estate / resale' },
+  { id: 'taxcert', label: 'Tax certificate outstanding', chip: 'Tax certificate' },
 ];
 export const PRESET_IDS = PRESETS.map((p) => p.id);
+
+/** Signal presets: the signal codes (pipeline/pa2/signals.py) each one matches, any of them. */
+export const SIGNAL_PRESETS: Partial<Record<PresetId, string[]>> = {
+  entity: ['dissolved', 'report_overdue', 'inactive'],
+  fundexit: ['fund_exit'],
+  taxgap: ['taxes_rising'],
+  flood: ['flood_zone'],
+  transfer: ['lender_sale', 'estate_sale', 'flip'],
+  taxcert: ['tax_certificate'],
+};
 
 /**
  * Starter screens: one-click examples of a real prospecting list (the welcome card and the Saved

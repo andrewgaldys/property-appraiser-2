@@ -22,6 +22,7 @@ import {
   RAMP_SELECTED,
   UNDERBUILT,
 } from '../config';
+import { isSignalPreset, presetMask, signalPids } from '../signals';
 import type { AppState, ExtrudeMode, Filters, Manifest, OwnerRef, SearchSet, Selection, ShadeMode } from '../types';
 
 export const SRC_POLY = 'parcels';
@@ -247,6 +248,11 @@ export function filterExpr(
     else if (p === 'outside') all.push(['>=', num('oa', 0), 1]);
     else if (p === 'small') all.push(['==', num('spf', 0), 1]);
     else if (p === 'trust') all.push(['==', num('et', 0), 1]);
+    else if (isSignalPreset(p)) {
+      // Signals are not in the tiles: keep the parcels whose signal mask has the preset's bits.
+      const pids = signalPids(presetMask(p));
+      all.push(['match', ['get', 'pid'], pids.length ? pids : ['\u0000'], true, false]);
+    }
   }
   return all as FilterSpecification;
 }

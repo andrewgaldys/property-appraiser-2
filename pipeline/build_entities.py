@@ -228,6 +228,16 @@ def run(cordata: Path, corevent: Path | None, *, parcels: Path = PARCELS, out: P
                 p.group = gid
     log(f"  {len(groups):,} principals link two or more owners")
 
+    # For later stages (deal signals): each matched parcel's entity, its status and type.
+    with (WORK / "parcel_entities.csv").open("w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["parcel_id", "doc", "confidence", "how", "state", "note", "note_date", "type", "family",
+                    "filed", "report_year", "file_date"])
+        for pid, m in sorted(matched.items()):
+            e = ents[m.doc]
+            w.writerow([pid, m.doc, m.confidence, m.how, e.state, e.note or "", e.note_date or "", e.ftype,
+                        e.family or "", e.filed or "", e.report_year or "", file_day.isoformat()])
+
     report = write_reports(rows, matched, ents, groups, by_pid, data, file_day, as_of)
     if publish:
         write_bundle(out, matched, ents, groups, report, file_day, as_of, demo)
@@ -400,8 +410,12 @@ def after_build(parcels: Path, out: Path) -> None:
     if cordata is None:
         log(f"No Sunbiz files in {SUNBIZ_RAW}: the bundle has no state business records "
             "(see pipeline/build_entities.py to add them).")
-        return
-    run(cordata, corevent, parcels=parcels, out=out)
+    else:
+        run(cordata, corevent, parcels=parcels, out=out)
+    # Deal signals use the state records when there are any, and every other source regardless.
+    from build_signals import run as build_signals
+
+    build_signals(parcels=parcels, out=out)
 
 
 def main() -> int:

@@ -79,6 +79,17 @@ export class HelpDialog {
               `status, filings, officers, managers and registered agents come from the Florida Division of Corporations’ free quarterly data files (as of ${shortDate(m.entities.file_date)}), matched to owners by name and, where it agrees, mailing address. ${int(m.entities.counts.parcels)} parcels are matched. Each match says how sure it is: check a possible match on Sunbiz before relying on it. Owners are linked when their records share an officer, manager or registered agent; commercial agent services and people who act as agent for many unrelated owners are left out.`,
             )
           : null,
+        m.signals
+          ? h(
+              'li',
+              null,
+              h('b', null, 'Deal signals: '),
+              'state business records (dissolved or lapsed owner companies), the tax roll (assessed far below market value), county sale records (fund exit window, lender or estate transfers, quick resales), FEMA flood maps (flood and coastal zones, older buildings in them), the Census coastline, and county tax certificate lists. Each chip on a parcel shows its source, the record date and how sure it is. ',
+              Object.entries(m.signals.sources)
+                .map(([, src]) => `${src.label}${src.as_of ? ` (${src.as_of})` : ''}`)
+                .join('; ') + '.',
+            )
+          : null,
         h('li', null, h('b', null, 'Owner lookups: '), 'the Sunbiz buttons open the Florida Division of Corporations’ own search. The app never queries it.'),
         h('li', null, h('b', null, 'Updated: '), `${shortDate(m.generated_at)}. Public records can lag or contain errors: confirm with the county before you rely on a figure.`),
       ),

@@ -53,13 +53,15 @@ pipeline/
   fetch_real_tricounty_parcels.py  Florida Statewide Cadastral -> web/public/data (what the site ships)
   build_fdor.py                    alternative: FDOR NAL + SDF + parcel polygon files -> web/public/data
   build_entities.py                Sunbiz quarterly files + the joined roll -> web/public/data/entities (state business records)
+  build_signals.py                 deal signals (entity status, holds, values, flood, coast, tax certificates) -> web/public/data/signals
   generate_sample_data.py          synthetic sample -> web/public/data (+ --emit-raw: FDOR-format test files)
   build_tiles.py                   re-tile from pipeline/out/parcels.parquet (e.g. after installing tippecanoe)
   sync_postgis.py                  optional: load the joined table into PostGIS / Supabase
   pa2/                             schema, DOR use codes, owner resolution, Sunbiz reader and matcher, MVT encoder, PMTiles writer, publisher
 web/                               Vite + TypeScript + MapLibre GL JS 6 + pmtiles
   public/data/                     manifest.json, parcels.pmtiles, points.pmtiles, parcels/*.json, owners/*.json, index.json,
-                                   entities/ (links/, docs/, people/: state business records, when built)
+                                   entities/ (links/, docs/, people/: state business records, when built),
+                                   signals/ (flags.json, detail/: deal signals, when built)
 .github/workflows/deploy.yml       build web/ and publish to GitHub Pages
 ```
 
@@ -327,6 +329,28 @@ Opening a parcel shows a **Look up on Sunbiz** button under the owner, and again
 - **What the link does.** It opens the Florida Division of Corporations' own search (search.sunbiz.org) in a new tab, with no referrer. For a company or organization it searches the entity name: Sunbiz lists names alphabetically from the term, so a name the tax roll cut off at 30 characters still lands on the entity. For an individual, and for a trustee named in a trust, it searches *officer / registered agent* by the roll's LAST FIRST name, which lists the companies that person manages. Government owners get no link: they are not registered.
 - **Owner type** (LLC, Corporation, Partnership, Trust or estate, Individual, Government, Organization) is read from the name alone ([web/src/entity.ts](web/src/entity.ts)) and shown as a badge only when the name says so; a cut-off company name gets no badge.
 - **What it is not.** The app never queries or scrapes sunbiz.org: the state records it shows come from the Division's bulk files (above). Without a match, the owner keeps these search buttons.
+
+## Deal signals
+
+[pipeline/build_signals.py](pipeline/build_signals.py) flags the parcels whose owner is more likely to sell or refinance, from public sources only. Each parcel gets a signal mask and, per signal, a short chip ("Held 6 yrs, LLC owner"), the date of the record behind it and a confidence. The source, its date and when it was pulled are kept once per source, in the manifest. It runs after *build_entities.py* (a full data build runs both), takes about five minutes, and writes `web/public/data/signals/` (`flags.json`, the masks for lists, filters and exports; `detail/`, the chips for the panels) and a report in `pipeline/out/signals/`.
+
+| Signal | Rule (thresholds in pipeline/pa2/config.py, `SIGNAL_*`) | Source |
+|---|---|---|
+| Owner company dissolved / annual report overdue / inactive | The matched Sunbiz record's status | Division of Corporations quarterly file |
+| Fund exit window | Exact hold of 5-7 years and a company owner | County sale records |
+| Taxes rising | Capped assessed value at least 30% below market (just) value: the 10% non-homestead cap keeps raising the tax base, and a sale resets it | FDOR tax roll |
+| Flood zone, coastal V zone | Half the lot or its center in FEMA's 1% annual-chance zone (A or V zones) | FEMA National Flood Hazard Layer, per county |
+| Older building in a flood zone | Built before 2002 (the Florida Building Code) and in the flood zone | FEMA + tax roll |
+| Near the coast | Within a mile of the Census coastline | Census TIGER/Line coastline |
+| Tax certificate | A certificate outstanding on the parcel | County Tax Collector lists (Palm Beach county-held so far) |
+| Lender or forced sale; estate, receiver or trustee | Latest transfer in the last 10 years with state sale code 12 or 38; code 19 | Broward and Martin histories, every county's latest sale |
+| Quick resale | Two sales of $10,000+ within 36 months, the later one in the last 10 years | Transfer histories (Palm Beach, Martin, St. Lucie, Broward) |
+
+**Getting the files.** FEMA flood maps: `https://msc.fema.gov/portal/downloadProduct?productID=NFHL_<county FIPS>C` into `pipeline/raw/fema/<FIPS>/` (12011 Broward, 12086 Miami-Dade, 12099 Palm Beach, 12085 Martin, 12111 St. Lucie, 12061 Indian River). Coastline: `tl_<year>_us_coastline.zip` from census.gov into `pipeline/raw/coastline/`. Tax certificates: each Tax Collector's list into `pipeline/raw/tax/<county>/` (Palm Beach posts its county-held certificates as an Excel file; the rest come by records request). A missing source skips its signals and the report says so.
+
+**In the app.** The Filters panel's *Owner signals* step adds a *Deal signals* group of presets (owner company dissolved or lapsed, fund exit window, taxes rising, flood zone, recent lender/estate/quick resale, tax certificate), with each one's parcel count; they combine with every other filter. A parcel shows its signal chips under the key facts (hover for source, record date and confidence); the owner profile counts each signal across the owner's parcels; both CSV exports add a *Deal signals* column. Signals are not in the map tiles yet: a signal preset filters the map by parcel ID.
+
+**Not yet.** Year-over-year value jumps need the prior-year rolls (requested from the Department of Revenue); tax delinquency covers only Palm Beach's county-held certificates until the six Tax Collectors' lists arrive.
 
 ## Top owners on the map
 

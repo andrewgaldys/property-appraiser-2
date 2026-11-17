@@ -790,3 +790,14 @@ body.drawer-open .hint, body.profile-open .hint { display: none; }
 .ent-rel .ent-weak { margin-top: 2px; }
 .ent-rel .op-ent-n { margin-top: 1px; }
 .ent-more { margin-top: 8px; }
+
+/* ---- Deal signals ------------------------------------------------------------------------------- */
+.signals.deal { margin-top: 8px; }
+.signals.deal li { border-color: var(--line-strong); color: var(--text); }
+.signals.deal li.sg-entity, .signals.deal li.sg-tax, .signals.deal li.sg-transfer { border-color: var(--warn); }
+.op-signals { margin: 14px 24px 0; }
+.sg-n { color: var(--muted); }
+.switch-count { margin-left: 6px; font: 12.5px var(--mono); color: var(--muted); }
+.switch-count:empty { display: none; }
+.deal-signals { margin-top: 14px; }
+.deal-signals .field-label { display: flex; align-items: center; gap: 4px; }

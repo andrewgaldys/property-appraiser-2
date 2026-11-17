@@ -96,6 +96,40 @@ export interface Manifest {
   owners: { url: string; shard_hex: number; item_fields: string[]; max_items: number; agent_addr_keys?: number[] };
   /** Sunbiz records matched to owners (absent until the pipeline's entity stage has run). */
   entities?: EntitiesManifest;
+  /** Deal signals per parcel (absent until the pipeline's signals stage has run). */
+  signals?: SignalsManifest;
+}
+
+/** One deal signal: its bit in a parcel's mask, its name and the source it comes from. */
+export interface SignalDef {
+  bit: number;
+  code: string;
+  label: string;
+  group: string;
+  source: string;
+}
+
+export interface SignalSource {
+  label: string;
+  as_of?: string | null;
+  pulled?: string | null;
+  file?: string;
+  /** Per county code, for sources that come county by county. */
+  per_county?: Record<string, string | { file?: string; as_of?: string | null; pulled?: string | null; kind?: string }>;
+}
+
+/** Deal signals: see pipeline/build_signals.py. */
+export interface SignalsManifest {
+  schema: string;
+  generated_at: string;
+  defs: SignalDef[];
+  sources: Record<string, SignalSource>;
+  flags: { url: string; bytes?: number };
+  detail: { url: string; shard_hex: number; fields: string[] };
+  /** Parcels per signal code, overall and per county code. */
+  counts: Record<string, number>;
+  per_county: Record<string, Record<string, number>>;
+  thresholds: Record<string, unknown>;
 }
 
 /** Florida Division of Corporations (Sunbiz) data matched to owners: see pipeline/build_entities.py. */
@@ -264,7 +298,10 @@ export interface Portfolio {
 }
 
 export type ExtrudeMode = 'flat' | 'value' | 'sqft' | 'hold';
-export type PresetId = 'long' | 'underbuilt' | 'outside' | 'small' | 'trust';
+export type PresetId =
+  | 'long' | 'underbuilt' | 'outside' | 'small' | 'trust'
+  // Deal signals (data bundle's signals stage): see config SIGNAL_PRESETS.
+  | 'entity' | 'fundexit' | 'taxgap' | 'flood' | 'transfer' | 'taxcert';
 /** Top owners: group parcels by owner name, or by mailing address (reveals sponsors behind single-asset LLCs). */
 export type OwnerGrouping = 'name' | 'addr';
 /** "Color by": asset class (default) or a metric ramp. */

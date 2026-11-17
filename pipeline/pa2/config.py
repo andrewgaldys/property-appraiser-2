@@ -182,6 +182,22 @@ PORTFOLIO_MAX_ITEMS = 500
 # agent / manager / registered-agent address rather than one beneficial owner.
 AGENT_ADDRESS_NAME_THRESHOLD = 25
 
+# Deal signals (pa2/signals.py, pipeline/build_signals.py). Each can be overridden with the environment
+# variable of the same name.
+# Held this many years (inclusive) by a company: a fund or syndicate exit window.
+SIGNAL_FUND_EXIT_YEARS = tuple(int(x) for x in os.environ.get("SIGNAL_FUND_EXIT_YEARS", "5,7").split(","))
+# Assessed (capped) value at least this far below market value: taxes keep rising toward market.
+SIGNAL_TAX_GAP_MIN = float(os.environ.get("SIGNAL_TAX_GAP_MIN", "0.3"))
+# Two priced sales (each at least SIGNAL_FLIP_MIN_PRICE) this many months apart or less: a quick resale.
+SIGNAL_FLIP_MONTHS = int(os.environ.get("SIGNAL_FLIP_MONTHS", "36"))
+SIGNAL_FLIP_MIN_PRICE = int(os.environ.get("SIGNAL_FLIP_MIN_PRICE", "10000"))
+# Transfer signals (lender, estate, quick resale) only count when the transfer is this recent (years).
+SIGNAL_RECENT_TRANSFER_YEARS = int(os.environ.get("SIGNAL_RECENT_TRANSFER_YEARS", "10"))
+# Buildings older than this year predate the Florida Building Code (effective 2002).
+SIGNAL_PRE_CODE_YEAR = int(os.environ.get("SIGNAL_PRE_CODE_YEAR", "2002"))
+# "Near the coast": within this many miles of the Census coastline.
+SIGNAL_COAST_MILES = float(os.environ.get("SIGNAL_COAST_MILES", "1.0"))
+
 # Sunbiz (Florida Division of Corporations) entity matching, see pa2/sunbiz.py. Each can be overridden
 # with the environment variable of the same name.
 # The tax roll's owner-name field holds this many characters: a name this long may be cut off.

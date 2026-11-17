@@ -2,6 +2,7 @@ import type { GeoJSONSourceSpecification } from '@maplibre/maplibre-gl-style-spe
 import { RESIDENTIAL_CLASSES } from './config';
 import { toEntity, type EntityLink, type EntityMatch, type EntityRecord, type PrincipalGroup } from './entities';
 import { buildIndex, type ParcelIndex, type RawIndex } from './parcelIndex';
+import type { SignalHit } from './signals';
 import type { Manifest, ParcelRecord, Portfolio, PortfolioGroup, PortfolioItem } from './types';
 
 /** 32-bit FNV-1a -> 8 hex chars. Must match pipeline/pa2/util.py fnv1a32 exactly. */
@@ -137,6 +138,41 @@ export class DataStore {
       });
     }
     return this.parcelIx;
+  }
+
+  // ---- Deal signals (manifest.signals) ------------------------------------------------------------
+
+  private signalShards = new Map<string, Promise<DetailShard>>();
+  private flagsPromise: Promise<Record<string, number> | null> | null = null;
+
+  /** Every flagged parcel's signal mask, fetched once (lists, filters, exports). */
+  signalFlags(): Promise<Record<string, number> | null> {
+    const spec = this.manifest.signals?.flags;
+    if (!spec) return Promise.resolve(null);
+    if (!this.flagsPromise) {
+      this.flagsPromise = this.json<{ fields: string[]; rows: Record<string, number> }>(spec.url).then((s) => s.rows);
+      this.flagsPromise.catch(() => {
+        this.flagsPromise = null;
+      });
+    }
+    return this.flagsPromise;
+  }
+
+  /** One parcel's signals: chip, record date, confidence and facts. */
+  async signalDetail(pid: string): Promise<SignalHit[]> {
+    const spec = this.manifest.signals?.detail;
+    if (!spec) return [];
+    const shard = fnv1a32(pid).slice(0, spec.shard_hex);
+    const s = await this.cached(this.signalShards, shard, () => this.json<DetailShard>(spec.url.replace('{shard}', shard)));
+    const rows = (s.rows[pid] as unknown[][] | undefined) ?? [];
+    const at = (f: string) => s.fields.indexOf(f);
+    return rows.map((r) => ({
+      code: String(r[at('code')]),
+      chip: String(r[at('chip')]),
+      date: (r[at('date')] as string | null) ?? null,
+      conf: Number(r[at('conf')] ?? 0),
+      facts: (r[at('facts')] as Record<string, unknown> | null) ?? null,
+    }));
   }
 
   // ---- Sunbiz records (manifest.entities) ------------------------------------------------------

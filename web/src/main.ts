@@ -17,6 +17,7 @@ import { AerialCard } from './ui/aerial';
 import { Brief } from './ui/brief';
 import { Drawer } from './ui/drawer';
 import { EntityCard } from './ui/entityCard';
+import { SignalChips } from './ui/signalChips';
 import { FilterPanel } from './ui/filters';
 import { HelpDialog } from './ui/help';
 import { FirstVisitHint } from './ui/hint';
@@ -28,6 +29,7 @@ import { Rail } from './ui/rail';
 import { ResultsPanel } from './ui/results';
 import { SearchBox } from './ui/search';
 import { ownerRefOf } from './results';
+import { initSignals, isSignalPreset, setSignalFlags } from './signals';
 import { LocalScreenRepository, SCREEN_KEYS, paramsScreen, screenParams, type ScreenState } from './screens';
 import { MAX_SET, resolveSearch } from './search';
 import { Toolbar } from './ui/toolbar';
@@ -99,6 +101,7 @@ async function boot(): Promise<void> {
   let manifest: Manifest;
   try {
     manifest = await data.loadManifest();
+    initSignals(manifest);
   } catch (err) {
     fatal(
       `Could not load ${data.url('manifest.json')}. Generate the sample data first, then reload:`,
@@ -170,7 +173,7 @@ async function boot(): Promise<void> {
     onOwnerProfile: () => {
       if (current) void openOwner(refForRecord(current.rec));
     },
-  }, aerial, entityCard);
+  }, aerial, entityCard, new SignalChips(data, manifest));
 
   // Owner profile: the drawer-sized panel the parcel drawer opens on top of.
   const profile = new OwnerProfile(manifest, {
@@ -278,6 +281,17 @@ async function boot(): Promise<void> {
     starter: (id) => applyStarter(id),
   });
   panel.slot('signals').append(prospecting.el);
+
+  // Deal signals: the masks load once; a screen that uses a signal preset re-runs when they arrive.
+  void data.signalFlags().then(
+    (rows) => {
+      setSignalFlags(rows);
+      prospecting.signalsLoaded();
+      const f = store.get().filters;
+      if (f.presets.some(isSignalPreset)) store.set({ filters: { ...f } });
+    },
+    (err) => console.error('Deal signals failed to load', err),
+  );
   rail.body('saved').append(prospecting.savedEl);
   prospecting.savedEl.open = true; // the panel is its header: the section inside never collapses
 

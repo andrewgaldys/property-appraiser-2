@@ -4,6 +4,7 @@ import { acres, int, money, moneyFull, parcelId, pct, saleDate, sqft, titleCase 
 import type { Manifest, ParcelRecord, Portfolio, PortfolioItem, TileProps } from '../types';
 import type { AerialCard } from './aerial';
 import type { EntityCard } from './entityCard';
+import type { SignalChips } from './signalChips';
 import {
   INFO,
   area,
@@ -87,6 +88,7 @@ export class Drawer {
     private handlers: DrawerHandlers,
     private aerial: AerialCard,
     private entity: EntityCard | null = null,
+    private signalChips: SignalChips | null = null,
   ) {
     this.el = root;
     this.top = h('div', { class: 'dr-top' });
@@ -251,6 +253,7 @@ export class Drawer {
         ),
       ),
       sig.length ? h('ul', { class: 'signals', 'aria-label': 'Screening flags' }, sig.map((s) => h('li', null, s))) : null,
+      this.signalChips?.enabled ? this.signalChips.show(r.parcel_id) : null,
     );
 
     // ---- Detail sections ------------------------------------------------------------------------

@@ -10,6 +10,7 @@ import { nominalMax } from '../map/layers';
 import { mailingLine, type IndexRow, type ParcelIndex } from '../parcelIndex';
 import { download, groupMembers, holdText, ownerRefOf, parcelsCsv, refKey, relatedEntities, stamp } from '../results';
 import { rowsBbox } from '../search';
+import { flagsOf, signalsReady } from '../signals';
 import type { Manifest, OwnerRef } from '../types';
 import { entityBlock } from './entityCard';
 import { infoTip } from './infotip';
@@ -221,6 +222,10 @@ export class OwnerProfile {
       ),
     );
 
+    // ---- Deal signals across the owner's parcels ------------------------------------------------
+    const signals = this.signalSummary(rows);
+    if (signals) this.body.append(signals);
+
     // ---- Map, class mix, timeline ----------------------------------------------------------------
     const mapSec = h('section', { class: 'dr-sec op-sec' }, h('h3', null, 'Where they own'), this.mini.el);
     this.body.append(mapSec);
@@ -268,6 +273,24 @@ export class OwnerProfile {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  /** How many of the owner's parcels carry each deal signal ("Flood zone · 3 parcels"). */
+  private signalSummary(rows: IndexRow[]): HTMLElement | null {
+    const defs = this.manifest.signals?.defs;
+    if (!defs || !signalsReady()) return null;
+    const items = defs
+      .map((d) => ({ d, n: rows.reduce((a, r) => a + (flagsOf(r.pid) & (1 << d.bit) ? 1 : 0), 0) }))
+      .filter((x) => x.n > 0);
+    if (!items.length) return null;
+    return h(
+      'ul',
+      { class: 'signals deal op-signals', 'aria-label': 'Deal signals across this owner’s parcels' },
+      items.map(({ d, n }) =>
+        h('li', { class: `sg sg-${d.group}`, title: this.manifest.signals?.sources[d.source]?.label ?? '' },
+          d.label, rows.length > 1 ? h('span', { class: 'sg-n' }, ` · ${int(n)} of ${int(rows.length)}`) : null),
       ),
     );
   }

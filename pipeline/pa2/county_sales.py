@@ -311,8 +311,11 @@ def doc_stamp_price(stamps: float | None, when: dt.date) -> int:
     return int(round(stamps / rate * 100))
 
 
-def broward(pids: list[str], cache: Path, min_price: int, refresh: bool = False) -> tuple[dict[str, SaleFacts], int | None]:
-    """Five most recent transfers per Broward folio: SALE_DATE_n (epoch ms), STAMP_AMOUNT_n, SALEn_QUAL_CODE."""
+def broward(pids: list[str], cache: Path, min_price: int, refresh: bool = False,
+            keep: dict[str, list[Sale]] | None = None) -> tuple[dict[str, SaleFacts], int | None]:
+    """Five most recent transfers per Broward folio: SALE_DATE_n (epoch ms), STAMP_AMOUNT_n, SALEn_QUAL_CODE.
+
+    keep: when given, every transfer read is added to it per parcel (sale histories for deal signals)."""
     fields = ["FOLIO"] + [f for k in range(1, 6) for f in (f"SALE_DATE_{k}", f"STAMP_AMOUNT_{k}", f"SALE{k}_QUAL_CODE")]
     rows = _gis_rows(
         pids, cache, refresh, url=BRO_TABLE, id_field="FOLIO", out_fields=",".join(fields),
@@ -337,6 +340,8 @@ def broward(pids: list[str], cache: Path, min_price: int, refresh: bool = False)
             transfers.append((d.year, d.month, doc_stamp_price(stamps, d), qual if qual and qual.isdigit() else None))
         if transfers:
             out[pid] = _facts(transfers, min_price)
+            if keep is not None:
+                keep.setdefault(pid, []).extend(Sale(*t) for t in transfers)
     return out, coverage_start(years)
 
 
@@ -356,7 +361,7 @@ def _read_zip_csv(path: Path, member_hint: str, sep: str, usecols: list[str]):
 
 
 def _history(df, pid_col: str, date_col: str, price_col: str, qual_col: str | None, date_fmt: str,
-             pids: set[str], min_price: int) -> tuple[dict[str, SaleFacts], int | None]:
+             pids: set[str], min_price: int, keep: dict[str, list[Sale]] | None = None) -> tuple[dict[str, SaleFacts], int | None]:
     """(facts per parcel, year from which the export's records are complete)."""
     import pandas as pd
 
@@ -374,23 +379,26 @@ def _history(df, pid_col: str, date_col: str, price_col: str, qual_col: str | No
             continue
         q = qual.iat[i] if qual is not None else None
         rows.setdefault(pid, []).append((int(w.year), int(w.month), int(p), q if q and q.isdigit() else None))
+    if keep is not None:
+        for pid, r in rows.items():
+            keep.setdefault(pid, []).extend(Sale(*t) for t in r)
     return {pid: _facts(r, min_price) for pid, r in rows.items()}, start
 
 
-def martin(path: Path, pids: set[str], min_price: int) -> tuple[dict[str, SaleFacts], int | None]:
+def martin(path: Path, pids: set[str], min_price: int, keep: dict[str, list[Sale]] | None = None) -> tuple[dict[str, SaleFacts], int | None]:
     """real_transfers.csv: pipe-delimited, ParcelID like 13-37-41-000-000-00010-7, SaleDate MM/DD/YYYY."""
     df = _read_zip_csv(path, "transfer", "|", ["ParcelID", "SaleDate", "SalePrice", "SalesValidity"])
-    return _history(df, "ParcelID", "SaleDate", "SalePrice", "SalesValidity", "%m/%d/%Y", pids, min_price)
+    return _history(df, "ParcelID", "SaleDate", "SalePrice", "SalesValidity", "%m/%d/%Y", pids, min_price, keep)
 
 
-def st_lucie(path: Path, pids: set[str], min_price: int) -> tuple[dict[str, SaleFacts], int | None]:
+def st_lucie(path: Path, pids: set[str], min_price: int, keep: dict[str, list[Sale]] | None = None) -> tuple[dict[str, SaleFacts], int | None]:
     """Transactions.csv: ParcelID like 1301-607-0049-000-5, SaleDate YYYY-MM-DD hh:mm:ss.
 
     NALCode is a local disqualification scheme (e.g. 0130 = affiliated parties), not the FDOR
     qualification code, so no qualification is recorded for St. Lucie sales.
     """
     df = _read_zip_csv(path, "transaction", ",", ["ParcelID", "SaleDate", "SalePrice"])
-    return _history(df, "ParcelID", "SaleDate", "SalePrice", None, "%Y-%m-%d", pids, min_price)
+    return _history(df, "ParcelID", "SaleDate", "SalePrice", None, "%Y-%m-%d", pids, min_price, keep)
 
 
 # --- Palm Beach: CAMA flat file (five most recent transfers per parcel) ------------------------------
@@ -414,7 +422,8 @@ def _pbc_cama_date(date: str, book: str) -> tuple[int, int] | None:
     return year, month
 
 
-def palm_beach_cama(path: Path, pids: set[str], min_price: int) -> tuple[dict[str, SaleFacts], int | None]:
+def palm_beach_cama(path: Path, pids: set[str], min_price: int,
+                    keep: dict[str, list[Sale]] | None = None) -> tuple[dict[str, SaleFacts], int | None]:
     """The Property Appraiser's CAMA CSV (PAS405E): each parcel's SALE record lists its five most recent
     transfers (book, page, date, instrument, validity code, type, price).
 
@@ -447,6 +456,9 @@ def palm_beach_cama(path: Path, pids: set[str], min_price: int) -> tuple[dict[st
                     if mine:
                         p = int(price) if price.strip().isdigit() else 0
                         rows.setdefault(pid, []).append((ym[0], ym[1], p, validity.strip() or None))
+    if keep is not None:
+        for pid, r in rows.items():
+            keep.setdefault(pid, []).extend(Sale(*t) for t in r)
     return {pid: _facts(r, min_price) for pid, r in rows.items()}, coverage_start(years)
 
 
