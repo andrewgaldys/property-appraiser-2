@@ -12,4 +12,4 @@ into a static data bundle the GitHub Pages frontend streams directly:
       owners/<shard>.json    owner portfolio index (name + mailing-address keys)
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

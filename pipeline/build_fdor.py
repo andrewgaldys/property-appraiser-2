@@ -160,6 +160,10 @@ def main() -> int:
     log.info("published %s parcels / $%.2fB just value -> %s (%s tiles) in %.0fs",
              f"{s['parcels']:,}", s["just_value"] / 1e9, args.out, manifest["tiles"]["format"], time.time() - t0)
     log.info("joined table -> %s", args.work_dir / "parcels.parquet")
+    # State business records for the new roll, when the Sunbiz files are in pipeline/raw/sunbiz/.
+    from build_entities import after_build
+
+    after_build(args.work_dir / "parcels.parquet", args.out)
     return 0
 
 

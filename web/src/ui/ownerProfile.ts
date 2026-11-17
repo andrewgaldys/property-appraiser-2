@@ -1,6 +1,9 @@
 import { Map as MapLibreMap, type GeoJSONSource, type LngLatBoundsLike } from 'maplibre-gl';
 import { CLASS_BADGE, CLASS_COLORS, CLASS_FALLBACK, CLASS_SHORT, COUNTY_META } from '../config';
+import type { DataStore } from '../data';
 import { appendAll, clear, copyButton, h, icon, toast, type Child } from '../dom';
+import { roleLabel, type EntityMatch, type PrincipalGroup } from '../entities';
+import { entityKind } from '../entity';
 import { acres, int, money, pct, saleDate, titleCase } from '../format';
 import { buildBasemapStyle } from '../map/basemap';
 import { nominalMax } from '../map/layers';
@@ -8,6 +11,7 @@ import { mailingLine, type IndexRow, type ParcelIndex } from '../parcelIndex';
 import { download, groupMembers, holdText, ownerRefOf, parcelsCsv, refKey, relatedEntities, stamp } from '../results';
 import { rowsBbox } from '../search';
 import type { Manifest, OwnerRef } from '../types';
+import { entityBlock } from './entityCard';
 import { infoTip } from './infotip';
 import { entityBadge, lookupIcon, lookupRow } from './lookups';
 
@@ -100,17 +104,19 @@ export class OwnerProfile {
   private rows: IndexRow[] = [];
   private ref: OwnerRef | null = null;
   private label = '';
+  private recordToken = 0;
 
   constructor(
     private manifest: Manifest,
     private handlers: ProfileHandlers,
+    private data: DataStore | null = null,
   ) {
     this.body = h('div', { class: 'op-body' });
     this.scroller = h('div', { class: 'dr-scroll' }, this.body);
     const foot = h(
       'footer',
       { class: 'dr-foot' },
-      h('button', { type: 'button', class: 'btn solid', onclick: () => this.exportCsv() }, icon('download', 14), 'Export parcels (CSV)'),
+      h('button', { type: 'button', class: 'btn solid', onclick: () => void this.exportCsv() }, icon('download', 14), 'Export parcels (CSV)'),
       h('button', { type: 'button', class: 'btn ghost', title: 'Copy a link to this owner', onclick: () => this.handlers.onCopyLink() }, icon('link'), 'Copy link'),
     );
     const close = h(
@@ -223,7 +229,9 @@ export class OwnerProfile {
     this.body.append(this.classMix(rows, jv));
     this.body.append(this.timeline(rows));
 
-    // ---- Entities --------------------------------------------------------------------------------
+    // ---- State business record, then the entities around this owner --------------------------
+    const record = this.stateRecord(ix, ref, rows);
+    if (record) this.body.append(record);
     this.body.append(this.entities(ix, ref, rows));
 
     // ---- Holdings --------------------------------------------------------------------------------
@@ -407,6 +415,153 @@ export class OwnerProfile {
     return wrap;
   }
 
+  /**
+   * The owner's record with the Division of Corporations (from the bundle's Sunbiz data), and the
+   * other owners linked to it through an officer, manager or registered agent. Filled in once loaded.
+   */
+  private stateRecord(ix: ParcelIndex, ref: OwnerRef, rows: IndexRow[]): HTMLElement | null {
+    const t = ++this.recordToken;
+    if (!this.manifest.entities || !this.data || ref.kind === 'a') return null;
+    const title = () =>
+      h(
+        'h3',
+        null,
+        'State business record',
+        infoTip('state business record', 'The Florida Division of Corporations’ record for this owner (Sunbiz), from its quarterly data files: status, filings, officers or managers and registered agent.'),
+      );
+    const sec = h('section', { class: 'dr-sec op-sec' }, title(), h('div', { class: 'dr-loading sm' }, h('span', { class: 'spinner' }), 'Checking state business records'));
+    const data = this.data;
+    void data.entitiesFor(rows.slice(0, 40).map((r) => r.pid)).then(
+      async (found) => {
+        if (t !== this.recordToken) return;
+        // The owner's entity: the record matched to most of its parcels (then the surest match).
+        const byDoc = new Map<string, { m: EntityMatch; n: number }>();
+        for (const m of found.values()) {
+          const e = byDoc.get(m.rec.doc);
+          if (e) e.n++;
+          else byDoc.set(m.rec.doc, { m, n: 1 });
+        }
+        const best = [...byDoc.values()].sort((a, b) => b.n - a.n || b.m.link.conf - a.m.link.conf)[0]?.m ?? null;
+        clear(sec);
+        sec.append(title());
+        if (!best) {
+          const kind = entityKind(this.label);
+          appendAll(
+            sec,
+            h(
+              'p',
+              { class: 'cap' },
+              kind === 'person' || kind === 'trust' || kind === 'gov'
+                ? 'Not a registered company: individuals, most trusts and government owners have no Division of Corporations record.'
+                : 'No record in the state’s business data matches this owner name. It may be registered in another state, under a different name, or cut short on the tax roll.',
+            ),
+            lookupRow(this.label, rows[0]?.co),
+          );
+          return;
+        }
+        sec.append(entityBlock(best, this.manifest));
+        const ids = [...new Set(best.rec.principals.filter((p) => p.group).map((p) => p.group))];
+        const groups = (await Promise.all(ids.map((id) => data.principalGroup(id).catch(() => null)))).filter(
+          (g): g is PrincipalGroup => !!g,
+        );
+        if (t !== this.recordToken) return;
+        this.relatedVia(sec, ix, best, groups);
+      },
+      () => {
+        if (t !== this.recordToken) return;
+        clear(sec);
+        sec.append(title(), h('p', { class: 'dr-error' }, 'Could not load the state business record.'));
+      },
+    );
+    return sec;
+  }
+
+  /**
+   * "Related entities via JOHN A SMITH": the other owners whose state record lists one of this owner's
+   * principals. One list, however many principals link them (a sponsor's officers often all do), each
+   * owner with the principals it shares.
+   */
+  private relatedVia(sec: HTMLElement, ix: ParcelIndex, own: EntityMatch, groups: PrincipalGroup[]): void {
+    const byDoc = new Map<string, { name: string; pids: Set<string>; via: Set<string>; shared: boolean }>();
+    for (const g of groups) {
+      for (const x of g.members) {
+        if (x.doc === own.rec.doc) continue;
+        let e = byDoc.get(x.doc);
+        if (!e) byDoc.set(x.doc, (e = { name: x.name, pids: new Set(), via: new Set(), shared: false }));
+        x.pids.forEach((pid) => e!.pids.add(pid));
+        e.via.add(g.label);
+        e.shared ||= x.shared;
+      }
+    }
+    if (!byDoc.size) return;
+    const roleOf = (g: PrincipalGroup) =>
+      [...new Set(own.rec.principals.filter((p) => p.group === g.id).map((p) => roleLabel(p.role)))].join(', ');
+    const items = [...byDoc.values()]
+      .map((e) => {
+        const rows = [...e.pids].map((pid) => ix.byPid.get(pid)).filter((r): r is IndexRow => !!r);
+        return { e, rows, jv: rows.reduce((a, r) => a + (r.jv ?? 0), 0) };
+      })
+      .sort((a, b) => b.jv - a.jv || b.e.pids.size - a.e.pids.size);
+    const one = groups.length === 1 ? groups[0]! : null;
+    const counts = groups
+      .filter((g) => g.statewide != null)
+      .map((g) => `${g.label} appears on ${int(g.statewide!)} Florida ${g.statewide === 1 ? 'entity' : 'entities'}`)
+      .join('; ');
+    const tip =
+      'Other owners whose Division of Corporations record lists the same officer, manager or registered agent as this owner’s. Often affiliates of one sponsor; their parcels are not included above. ' +
+      (counts ? `${counts}. ` : '') +
+      '“Name only” marks an owner linked by the name alone, with a different address on the state record: it could be a different person with the same name.';
+    const principals = groups.map((g) => `${g.label}${roleOf(g) ? ` (${roleOf(g).toLowerCase()})` : ''}`);
+    const row = ({ e, rows, jv }: (typeof items)[number]) =>
+      h(
+        'li',
+        null,
+        h(
+          'span',
+          { class: 'ent-rel-who' },
+          rows[0]
+            ? h('button', { type: 'button', class: 'op-ent-name', title: 'Open this owner', onclick: () => this.handlers.onOpenOwner(ownerRefOf(rows[0]!, 'name', ix)) }, e.name)
+            : h('span', { class: 'op-ent-text' }, e.name),
+          !one ? h('span', { class: 'ent-rel-via' }, `via ${[...e.via].join(', ')}`) : null,
+        ),
+        e.shared ? null : h('span', { class: 'ent-weak', title: 'Linked by name only: a different address on the state record' }, 'name only'),
+        h('span', { class: 'op-ent-n' }, `${int(e.pids.size)} ${e.pids.size === 1 ? 'parcel' : 'parcels'}${jv ? ` · ${money(jv)}` : ''}`),
+      );
+    const list = h('ul', { class: 'op-ent ent-rel' }, items.slice(0, 40).map(row));
+    const more =
+      items.length > 40
+        ? h(
+            'button',
+            {
+              type: 'button',
+              class: 'btn ghost sm ent-more',
+              onclick: () => {
+                list.append(...items.slice(40).map(row));
+                more?.remove();
+              },
+            },
+            `Show all ${int(items.length)}`,
+          )
+        : null;
+    appendAll(
+      sec,
+      h(
+        'h4',
+        { class: 'op-sub ent-via' },
+        'Related entities via ',
+        one ? h('b', null, one.label) : 'shared principals',
+        infoTip('related entities via a principal', tip),
+        h(
+          'span',
+          { class: 'ent-via-role' },
+          one ? `${roleOf(one) || 'Principal'} of this owner` : principals.slice(0, 4).join(' · ') + (principals.length > 4 ? ` and ${principals.length - 4} more` : ''),
+        ),
+      ),
+      list,
+      more,
+    );
+  }
+
   /** Who is in the group, and who is linked to it by a shared mailing address. */
   private entities(ix: ParcelIndex, ref: OwnerRef, rows: IndexRow[]): HTMLElement {
     const sec = h('section', { class: 'dr-sec op-sec' });
@@ -481,12 +636,15 @@ export class OwnerProfile {
     return sec;
   }
 
-  private exportCsv(): void {
-    if (!this.rows.length) return;
+  private async exportCsv(): Promise<void> {
+    const rows = this.rows;
+    if (!rows.length) return;
     const base = `${window.location.origin}${window.location.pathname}`;
     const slug = (this.label || 'owner').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
-    download(`pa2-${slug}-${stamp()}.csv`, parcelsCsv(this.rows, this.manifest.use_codes ?? {}, nominalMax(this.manifest), (pid) => `${base}#p=${pid}`));
-    toast(`Exported ${int(this.rows.length)} ${this.rows.length === 1 ? 'parcel' : 'parcels'}`);
+    // State business records, when the bundle has them: one more set of columns.
+    const ent = this.manifest.entities && this.data ? await this.data.entitiesFor(rows.map((r) => r.pid)).catch(() => undefined) : undefined;
+    download(`pa2-${slug}-${stamp()}.csv`, parcelsCsv(rows, this.manifest.use_codes ?? {}, nominalMax(this.manifest), (pid) => `${base}#p=${pid}`, ent));
+    toast(`Exported ${int(rows.length)} ${rows.length === 1 ? 'parcel' : 'parcels'}`);
   }
 
   /** Key for comparing with the map's owner spotlight. */

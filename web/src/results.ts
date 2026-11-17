@@ -1,4 +1,5 @@
 import { BTL_STEPS, CLASS_BADGE, COUNTY_META, LONG_HOLD_YEARS, LOT_STEPS_AC, UNDERBUILT } from './config';
+import { STATE_LABEL, confidenceLabel, principalsLine, typeLabel, type EntityMatch } from './entities';
 import { entityLabel, sunbizUrl } from './entity';
 import { parcelId } from './format';
 import { mailingLine, type IndexRow, type ParcelIndex } from './parcelIndex';
@@ -267,13 +268,36 @@ export function toCsv(header: string[], rows: unknown[][]): string {
 const round = (v: number | null | undefined, d = 0): number | null => (v == null ? null : Math.round(v * 10 ** d) / 10 ** d);
 const saleDateIso = (r: IndexRow): string | null => (r.sy ? (r.sm ? `${r.sy}-${String(r.sm).padStart(2, '0')}` : String(r.sy)) : null);
 
-export function ownersCsv(ix: ParcelIndex, groups: OwnerResult[], grouping: OwnerGrouping): string {
+/** State business record columns (Sunbiz), added to exports when the bundle has the data. */
+export const ENTITY_COLUMNS = [
+  'Sunbiz entity', 'Sunbiz document number', 'Entity type', 'Entity status', 'Last annual report', 'Entity filed',
+  'Registered agent', 'Officers and managers', 'Sunbiz match',
+];
+
+export function entityColumns(m: EntityMatch | undefined): (string | number | null)[] {
+  if (!m) return ENTITY_COLUMNS.map(() => null);
+  const { rec, link } = m;
+  const ra = rec.principals.find((p) => p.role === 'RA');
+  return [
+    rec.name,
+    rec.doc,
+    typeLabel(rec.type),
+    [STATE_LABEL[rec.state], rec.note && rec.state !== 'O' ? `${rec.note}${rec.noteDate ? ` ${rec.noteDate}` : ''}` : null].filter(Boolean).join(': '),
+    rec.reportYear,
+    rec.filed,
+    ra ? [ra.name, ra.addr].filter(Boolean).join(', ') : null,
+    principalsLine({ ...rec, principals: rec.principals.filter((p) => p.role !== 'RA') }) || null,
+    `${confidenceLabel(link.conf)} (${link.conf.toFixed(2)})`,
+  ];
+}
+
+export function ownersCsv(ix: ParcelIndex, groups: OwnerResult[], grouping: OwnerGrouping, ent?: Map<string, EntityMatch>): string {
   const header = [
     'Owner name', 'Related entities', 'Matching parcels', 'Total parcels (all counties)', 'Assessed market value (matching)',
     'Building SF (matching)', 'Residential units (matching)', 'Asset classes', 'Longest hold (years)', 'Average hold (years, known holds)',
     'Mailing address 1', 'Mailing address 2', 'Mailing city', 'Mailing state', 'Mailing ZIP', 'Other mailing addresses',
     'Out-of-area owner', 'Estate or trust', 'Small portfolio owner', 'Largest property', 'Largest property city', 'Grouped by',
-    'Owner type (from name)', 'Sunbiz lookup',
+    'Owner type (from name)', 'Sunbiz lookup', ...(ent ? ENTITY_COLUMNS : []),
   ];
   const rows = groups.map((g) => [
     g.label,
@@ -300,17 +324,26 @@ export function ownersCsv(ix: ParcelIndex, groups: OwnerResult[], grouping: Owne
     g.ref.kind === 'a' ? 'Mailing address' : g.ref.kind === 'n' ? 'Owner name' : grouping === 'addr' ? 'Single parcel' : 'Owner name',
     entityLabel(g.label) || null,
     sunbizUrl(g.label, g.top.co) || null,
+    // An address group holds several owners: its largest property's owner stands for it.
+    ...(ent ? entityColumns(ent.get(g.top.pid)) : []),
   ]);
   return toCsv(header, rows);
 }
 
-export function parcelsCsv(rows: IndexRow[], useCodes: Record<string, string>, nominal: number, link: (pid: string) => string): string {
+export function parcelsCsv(
+  rows: IndexRow[],
+  useCodes: Record<string, string>,
+  nominal: number,
+  link: (pid: string) => string,
+  ent?: Map<string, EntityMatch>,
+): string {
   const header = [
     'Parcel ID', 'County', 'Site address', 'City', 'ZIP', 'Asset class', 'Property use', 'Assessed market value',
     'Nominal value (common area / sub-parcel)', 'Building SF', 'Lot acres', 'Lot SF', 'Residential units', 'Year built',
     'Last sale date', 'Last sale price', 'Years held', 'Owner name', 'Mailing address 1', 'Mailing address 2',
     'Mailing city', 'Mailing state', 'Mailing ZIP', 'Mailing address (one line)', 'Out-of-area owner', 'Estate or trust',
     'Small portfolio owner', 'Latitude', 'Longitude', 'Link', 'Owner type (from name)', 'Sunbiz lookup',
+    ...(ent ? ENTITY_COLUMNS : []),
   ];
   const out = rows.map((r) => [
     parcelId(r.pid, r.co),
@@ -345,6 +378,7 @@ export function parcelsCsv(rows: IndexRow[], useCodes: Record<string, string>, n
     link(r.pid),
     entityLabel(r.own) || null,
     sunbizUrl(r.own, r.co) || null,
+    ...(ent ? entityColumns(ent.get(r.pid)) : []),
   ]);
   return toCsv(header, out);
 }

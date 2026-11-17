@@ -11,7 +11,7 @@ A Python pipeline pulls the parcels from the Florida Statewide Cadastral layer (
 - **Satellite**: a spyglass lens around the cursor (zoom 14+, toggle with `S`), a Map / Hybrid / Split basemap switch, and a live aerial of the selected parcel in the drawer.
 - **Prospecting screens**: five presets a broker can mix (long-term holders, underbuilt sites, out-of-area owners, small portfolio owners, estate / trust owned) on top of every other filter; named **saved screens**; and a page link that always reopens the exact screen.
 - **Owners & parcels tables** (under the map): every parcel matching the screen and search, across all six counties or only the map view, grouped into owners with related entities, parcel counts, value, building SF, asset classes, prospecting signals, longest and average hold, and mailing address. Sortable, linked to the map both ways, and exportable to CSV for a CRM or mail merge.
-- **Sunbiz lookups**: every owner in the parcel panel, the owner profile and the CSV exports carries a link to Florida's state business records (the entity itself, or for a person the companies that list them), plus an owner-type badge read from the name.
+- **State business records** (Sunbiz): company owners are matched to the Florida Division of Corporations' free quarterly data files. The parcel panel and the owner profile show the entity's status (active, annual report overdue, administratively dissolved, inactive), filing date, last annual report, officers or managers and registered agent, and how sure the match is. The owner profile lists **related entities via** each principal: other owners whose records name the same person or company. Every owner also keeps a link to Sunbiz's own search to verify it.
 - **Owner profiles**: everything an owner holds in the six counties, a mini map, an acquisition timeline (last priced sale of each parcel), average hold, asset-class mix, mailing addresses and related entities; CSV export of the holdings.
 - **Map first**: the page opens as the map, a search box and a slim rail. Filters, Insights, Saved screens and Map options each open from the rail as one pop-up panel at a time; the Owners list and the guide open from it too. On phones the rail is a bottom bar and panels rise from it.
 - **Search** (top-left of the map, or press `/`): owner names, site addresses, cities, parcel IDs (dashed or not), property types and shared mailing addresses. Results come back grouped as owners, mailing addresses and parcels; pick one parcel to fly to it, or show an owner, a mailing address or every match on the map as a removable filter.
@@ -52,12 +52,14 @@ python3 -m venv pipeline/.venv && pipeline/.venv/bin/pip install -r pipeline/req
 pipeline/
   fetch_real_tricounty_parcels.py  Florida Statewide Cadastral -> web/public/data (what the site ships)
   build_fdor.py                    alternative: FDOR NAL + SDF + parcel polygon files -> web/public/data
+  build_entities.py                Sunbiz quarterly files + the joined roll -> web/public/data/entities (state business records)
   generate_sample_data.py          synthetic sample -> web/public/data (+ --emit-raw: FDOR-format test files)
   build_tiles.py                   re-tile from pipeline/out/parcels.parquet (e.g. after installing tippecanoe)
   sync_postgis.py                  optional: load the joined table into PostGIS / Supabase
-  pa2/                             schema, DOR use codes, owner resolution, MVT encoder, PMTiles writer, publisher
+  pa2/                             schema, DOR use codes, owner resolution, Sunbiz reader and matcher, MVT encoder, PMTiles writer, publisher
 web/                               Vite + TypeScript + MapLibre GL JS 6 + pmtiles
-  public/data/                     manifest.json, parcels.pmtiles, points.pmtiles, parcels/*.json, owners/*.json, index.json
+  public/data/                     manifest.json, parcels.pmtiles, points.pmtiles, parcels/*.json, owners/*.json, index.json,
+                                   entities/ (links/, docs/, people/: state business records, when built)
 .github/workflows/deploy.yml       build web/ and publish to GitHub Pages
 ```
 
@@ -287,7 +289,7 @@ The tables run on `index.json` in the browser and use exactly the map's filter r
 - **Sorting**: click a column header; click again to reverse.
 - **Linked to the map**: clicking an owner row opens the owner profile and spotlights the group's parcels. Clicking a parcel row flies to the parcel and opens it. Selecting a parcel on the map highlights its row in both tables.
 - **Export CSV** downloads the open table in its current sort, as UTF-8 with a BOM so Excel opens it correctly. Missing values are left blank, never zero. Text that a spreadsheet would run as a formula is escaped.
-  - **Owners columns:** Owner name, Related entities, Matching parcels, Total parcels (all counties), Assessed market value, Building SF, Residential units, Asset classes, Longest hold, Average hold; then Mailing address 1 and 2, city, state and ZIP as separate columns for mail merge; then Other mailing addresses, Out-of-area owner (out of state or elsewhere in Florida), Estate or trust, Small portfolio owner, Largest property, Grouped by, Owner type (read from the name) and a Sunbiz lookup link.
+  - **Owners columns:** Owner name, Related entities, Matching parcels, Total parcels (all counties), Assessed market value, Building SF, Residential units, Asset classes, Longest hold, Average hold; then Mailing address 1 and 2, city, state and ZIP as separate columns for mail merge; then Other mailing addresses, Out-of-area owner (out of state or elsewhere in Florida), Estate or trust, Small portfolio owner, Largest property, Grouped by, Owner type (read from the name) and a Sunbiz lookup link. With state business records in the bundle, both exports add *Sunbiz entity, Sunbiz document number, Entity type, Entity status, Last annual report, Entity filed, Registered agent, Officers and managers* and *Sunbiz match* (an address group uses its largest property's owner).
   - **Parcels columns:** Parcel ID (county format), County, Site address, City, ZIP, Asset class, Property use, Assessed market value, Nominal-value flag, Building SF, Lot acres and SF, Residential units, Year built, Last sale date and price, Years held, Owner name, the split mailing address plus a one-line version, Out-of-area owner, Estate or trust, Small portfolio owner, Latitude, Longitude, a Link back to the parcel in the app, Owner type (read from the name) and a Sunbiz lookup link.
 
 ## Owner profiles
@@ -301,13 +303,30 @@ Opening an owner (from a table row, Top owners, a parcel's *Owner profile* butto
 - **All parcels**: each opens in the property panel on top of the profile, with *Back to <owner>*.
 - The map spotlights the group, and the link (`#…&o=n.<parcel id>`: the owner-name group of that parcel; `a.` for its mailing-address group) reopens the profile. **Export parcels (CSV)** downloads the holdings.
 
-## Sunbiz lookups
+## State business records (Sunbiz)
+
+The Florida Division of Corporations publishes every corporation, LLC and limited partnership on file as free quarterly data files (January, April, July, October). [pipeline/build_entities.py](pipeline/build_entities.py) matches the roll's company owners to them and publishes what it found next to the parcel data.
+
+**Getting the files.** On the Division's [quarterly data page](https://dos.fl.gov/sunbiz/other-services/data-downloads/quarterly-data), choose *Continue to Download Files* and sign in with the public username and password printed on that page, then download `cordata.zip` and `corevent.zip` from *doc → quarterly → cor* into `pipeline/raw/sunbiz/` (kept out of git). The pipeline never signs in anywhere; refresh the files each quarter.
+
+```bash
+pipeline/.venv/bin/python pipeline/build_entities.py
+```
+
+It reads both files without unzipping them (several GB of fixed-width text, [layout](https://dos.sunbiz.org/data-definitions/cor.html)), keeps only the entities whose names can match an owner, and writes `web/public/data/entities/` plus an `entities` section in the manifest (source, file date, coverage per county). Its report goes to `pipeline/out/sunbiz/`: `report.json` (match rates per county, statuses, event kinds), `matches.csv`, `unmatched.csv` (largest first, to review) and `principals.csv`. `--no-publish` stops before publishing, `--clear` removes the published data. A full data build runs it automatically when the files are present, and drops stale records when they are not.
+
+- **Matching** ([pipeline/pa2/sunbiz.py](pipeline/pa2/sunbiz.py)). Only company-like owner names are tried (LLC, corporation, partnership, organization, or a name cut off by the roll), with the same name normalizer as owner grouping. *Exact*: the names agree once punctuation and designators are normalized. *Prefix*: the roll cuts names at 30 characters (7.6% of parcels), so a cut name matches the entity names it begins. *Core*: the names agree but for LLC/INC and the like. Each match gets a confidence from 0 to 1, raised when the owner's tax bill goes to the entity's principal, mailing or officer address and lowered when several entities fit the name. Below 0.6 (`SUNBIZ_MIN_CONFIDENCE`) it is reported but not published. The app shows *Strong* (0.85+), *Likely* (0.7+) or *Possible* with the reason.
+- **Status.** *Active*; *Annual report overdue* (active, but no report for the current year after the May 1 deadline: the Division dissolves such entities in late September); *Administratively dissolved* (or a foreign entity's registration revoked, from the events file); *Inactive* (dissolved by its owners, merged, withdrawn). Also the filing date and age, the last annual report and a reinstatement in the last three years.
+- **Principals.** Up to six officers or managers and the registered agent, with their addresses. Owners whose records share a principal are linked: the owner profile lists **Related entities via** that person or company, with each linked owner's parcels and value. Commercial registered-agent services never link owners. Nor does a person listed only as registered agent or authorized person (often an attorney, accountant or filing clerk) on more than `SUNBIZ_RA_PERSON_MAX` (10) matched owners or Florida entities. A name that appears on more than `SUNBIZ_COMMON_NAME` (15) Florida entities links only where it gives the same address, and a link where the address differs is marked *name only*.
+- **Limits.** The data file holds six officers per entity (Sunbiz shows the rest). Owners registered only in another state, or under a different name, are not matched. A possible match can be the wrong company with a similar name: every record carries *Verify on Sunbiz*.
+
+### Sunbiz lookups
 
 Opening a parcel shows a **Look up on Sunbiz** button under the owner, and again in the *Owner & contact* section with the mailing address (one click copies it). The owner profile has the same button, and one per entity in its lists. Both CSV exports end with *Owner type (from name)* and *Sunbiz lookup* columns.
 
 - **What the link does.** It opens the Florida Division of Corporations' own search (search.sunbiz.org) in a new tab, with no referrer. For a company or organization it searches the entity name: Sunbiz lists names alphabetically from the term, so a name the tax roll cut off at 30 characters still lands on the entity. For an individual, and for a trustee named in a trust, it searches *officer / registered agent* by the roll's LAST FIRST name, which lists the companies that person manages. Government owners get no link: they are not registered.
 - **Owner type** (LLC, Corporation, Partnership, Trust or estate, Individual, Government, Organization) is read from the name alone ([web/src/entity.ts](web/src/entity.ts)) and shown as a badge only when the name says so; a cut-off company name gets no badge.
-- **What it is not.** Nothing is copied or scraped from Sunbiz, so the app shows no status, registered agent or officers of its own. The sanctioned source for that is the Division's free bulk data (*Data Downloads → Quarterly Data → Corporate Data*, `cordata.zip`, fixed-width records with status, addresses, registered agent and officers), downloaded from its data portal with the public login the Division posts. Matching those records to owner names is the next step toward contact information.
+- **What it is not.** The app never queries or scrapes sunbiz.org: the state records it shows come from the Division's bulk files (above). Without a match, the owner keeps these search buttons.
 
 ## Top owners on the map
 
@@ -369,7 +388,7 @@ Other asset classes appear when their codes are fetched: Single Family 001, Cond
 Mailing addresses are standardized: `SUITE`/`STE`/`#` → `#`, directionals and street types abbreviated, `P.O. Box` → `PO BOX`, `C/O` lines skipped, ZIP5.
 Groups of 2+ parcels get integer keys stored in the tiles, so a click highlights the whole portfolio across all six counties.
 An address shared by 25+ distinct owner names is flagged as a likely manager or registered-agent address.
-Swap in Sunbiz officer/agent matching or fuzzy matching here later.
+State business records (above) add links through shared officers, managers and registered agents.
 
 ## Optional: PostGIS / Supabase
 
@@ -389,7 +408,7 @@ This creates `pa2_parcels` (indexed), the view `pa2_owner_portfolios` and the fu
 - Sale history: see *Sales history and hold periods*. Palm Beach's CAMA file keeps five transfers per parcel, so a parcel with five nominal transfers in a row keeps a minimum hold rather than its last priced sale.
 - Last-sale prices are as recorded: a deed covering several parcels may carry the whole package's price on each of them.
 - Condo units (004) and individual mobile homes (002) are excluded by default; see the opt-in flags.
-- Not yet included: comps, and entity details from Sunbiz's bulk data (the app links to Sunbiz instead; see *Sunbiz lookups*). Search matches word beginnings, not misspellings.
+- Not yet included: comps. Search matches word beginnings, not misspellings.
 - Wide views are heavy: at zoom 8 the map draws every parcel as a dot, and the tile that holds Miami and Fort Lauderdale is about 2.4 MB. Thinning the low-zoom tiles (with exact matches drawn from the index) is the next step if coverage grows.
 - Saved screens stay in the browser that saved them until a backend replaces `LocalScreenRepository`; share a screen with its link.
 - Prospecting flags read names and mailing addresses as the roll publishes them: a trust owned through an LLC is not flagged, and a local owner who mails tax bills to an out-of-state office is.

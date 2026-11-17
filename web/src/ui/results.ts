@@ -113,7 +113,7 @@ export class ResultsPanel {
     this.summary = h('span', { class: 'rs-summary' });
     this.exportBtn = h(
       'button',
-      { type: 'button', class: 'btn ghost sm rs-export', 'aria-label': 'Export CSV', onclick: () => this.exportCsv() },
+      { type: 'button', class: 'btn ghost sm rs-export', 'aria-label': 'Export CSV', onclick: () => void this.exportCsv() },
       icon('download', 14),
       h('span', { class: 'rs-btn-label' }, 'Export CSV'),
     );
@@ -337,21 +337,29 @@ export class ResultsPanel {
     return t;
   }
 
-  private exportCsv(): void {
+  private async exportCsv(): Promise<void> {
     const ix = this.ix;
     if (!ix) return;
     const s = this.store.get();
+    // State business records, when the bundle has them, add a set of columns (fetched per shard).
+    const entities = async (pids: string[]) => {
+      if (!this.manifest.entities) return undefined;
+      if (pids.length > 2000) toast('Adding state business records…');
+      return this.data.entitiesFor(pids).catch(() => undefined);
+    };
     // Closed, the tables are empty (see release): export the same rows in the default order, by value.
     if (this.tab === 'owners') {
       const rows = this.open ? this.ownersTable.sorted() : ownerResults(ix, this.parcels, s.ownerGroup).sort((a, b) => b.jv - a.jv);
-      download(`pa2-owners-${stamp()}.csv`, ownersCsv(ix, rows, s.ownerGroup));
+      const ent = await entities(rows.map((g) => g.top.pid));
+      download(`pa2-owners-${stamp()}.csv`, ownersCsv(ix, rows, s.ownerGroup, ent));
       toast(`Exported ${int(rows.length)} ${rows.length === 1 ? 'owner' : 'owners'}`);
     } else {
       const rows = this.open ? this.parcelsTable.sorted() : [...this.parcels].sort((a, b) => (b.jv ?? 0) - (a.jv ?? 0));
       const base = `${window.location.origin}${window.location.pathname}`;
+      const ent = await entities(rows.map((r) => r.pid));
       download(
         `pa2-parcels-${stamp()}.csv`,
-        parcelsCsv(rows, this.manifest.use_codes ?? {}, nominalMax(this.manifest), (pid) => `${base}#p=${pid}`),
+        parcelsCsv(rows, this.manifest.use_codes ?? {}, nominalMax(this.manifest), (pid) => `${base}#p=${pid}`, ent),
       );
       toast(`Exported ${int(rows.length)} ${rows.length === 1 ? 'parcel' : 'parcels'}`);
     }

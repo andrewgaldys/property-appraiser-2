@@ -8,7 +8,7 @@ import './styles/brief.css';
 
 import { DEFAULT_FILTERS, STARTER_SCREENS } from './config';
 import { DataStore } from './data';
-import { h, toast } from './dom';
+import { h, icon, toast } from './dom';
 import { MapController } from './map/controller';
 import { Store, loadSavedView, saveView } from './state';
 import type { AppState, Bbox, Manifest, OwnerRef, ParcelRecord, Portfolio, PortfolioItem, TileProps } from './types';
@@ -16,6 +16,7 @@ import { ActiveFilters } from './ui/activeFilters';
 import { AerialCard } from './ui/aerial';
 import { Brief } from './ui/brief';
 import { Drawer } from './ui/drawer';
+import { EntityCard } from './ui/entityCard';
 import { FilterPanel } from './ui/filters';
 import { HelpDialog } from './ui/help';
 import { FirstVisitHint } from './ui/hint';
@@ -139,6 +140,25 @@ async function boot(): Promise<void> {
   let current: { rec: ParcelRecord; portfolio: Portfolio | null } | null = null;
   let token = 0;
 
+  // The owner's state business record (Sunbiz) in the parcel panel. A principal who also appears on
+  // other owners' records opens the owner profile, where those owners are listed.
+  const entityCard = new EntityCard(data, manifest, {
+    linked: () =>
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'ent-link',
+          title: 'Other owners whose state record lists this person or company: see the owner profile',
+          onclick: () => {
+            if (current) void openOwner(refForRecord(current.rec));
+          },
+        },
+        'Other owners',
+        icon('arrow', 12),
+      ),
+  });
+
   const drawer = new Drawer(document.getElementById('drawer')!, manifest, {
     onClose: () => clearSelection(),
     onSelectItem: (it: PortfolioItem) => void select(it.parcel_id, { fly: true, keepFocus: true }),
@@ -150,7 +170,7 @@ async function boot(): Promise<void> {
     onOwnerProfile: () => {
       if (current) void openOwner(refForRecord(current.rec));
     },
-  }, aerial);
+  }, aerial, entityCard);
 
   // Owner profile: the drawer-sized panel the parcel drawer opens on top of.
   const profile = new OwnerProfile(manifest, {
@@ -158,7 +178,7 @@ async function boot(): Promise<void> {
     onSelectParcel: (pid) => void select(pid, { fly: true }),
     onOpenOwner: (ref) => void openOwner(ref),
     onCopyLink: () => copyLink('Link to this owner copied'),
-  });
+  }, data);
   document.getElementById('app')!.append(profile.el);
 
   function copyLink(done: string): void {

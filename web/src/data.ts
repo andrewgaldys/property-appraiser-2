@@ -1,5 +1,6 @@
 import type { GeoJSONSourceSpecification } from '@maplibre/maplibre-gl-style-spec';
 import { RESIDENTIAL_CLASSES } from './config';
+import { toEntity, type EntityLink, type EntityMatch, type EntityRecord, type PrincipalGroup } from './entities';
 import { buildIndex, type ParcelIndex, type RawIndex } from './parcelIndex';
 import type { Manifest, ParcelRecord, Portfolio, PortfolioGroup, PortfolioItem } from './types';
 
@@ -23,6 +24,8 @@ interface OwnerShard {
   a: Record<string, PortfolioGroup>;
 }
 
+type RawGroup = { label: string; kind: 'P' | 'C'; statewide: number | null; members: [string, string, string, number, string[]][] };
+
 type GeoJSONData = GeoJSONSourceSpecification['data'];
 
 /** Data bundle location: VITE_DATA_URL (e.g. an R2/S3 bucket) or ./data/ next to index.html. */
@@ -37,6 +40,8 @@ export class DataStore {
   manifest!: Manifest;
   private detail = new Map<string, Promise<DetailShard>>();
   private owners = new Map<string, Promise<OwnerShard>>();
+  private entityShards = new Map<string, Promise<DetailShard>>();
+  private peopleShards = new Map<string, Promise<Record<string, RawGroup>>>();
 
   constructor(readonly base: URL = dataBaseUrl()) {}
 
@@ -132,6 +137,67 @@ export class DataStore {
       });
     }
     return this.parcelIx;
+  }
+
+  // ---- Sunbiz records (manifest.entities) ------------------------------------------------------
+
+  private entityShard(kind: 'links' | 'docs', key: string): Promise<DetailShard> {
+    const spec = this.manifest.entities![kind];
+    const shard = fnv1a32(key).slice(0, spec.shard_hex);
+    return this.cached(this.entityShards, `${kind}/${shard}`, () => this.json<DetailShard>(spec.url.replace('{shard}', shard)));
+  }
+
+  /** The state business record matched to this parcel's owner, if any. */
+  async entityLink(pid: string): Promise<EntityLink | null> {
+    if (!this.manifest.entities) return null;
+    const row = (await this.entityShard('links', pid)).rows[pid];
+    return row ? { doc: String(row[0]), conf: Number(row[1]), how: String(row[2]) } : null;
+  }
+
+  async entity(doc: string): Promise<EntityRecord | null> {
+    if (!this.manifest.entities) return null;
+    const s = await this.entityShard('docs', doc);
+    const row = s.rows[doc];
+    return row ? toEntity(doc, s.fields, row) : null;
+  }
+
+  async entityFor(pid: string): Promise<EntityMatch | null> {
+    const link = await this.entityLink(pid);
+    const rec = link ? await this.entity(link.doc) : null;
+    return link && rec ? { link, rec } : null;
+  }
+
+  /** Records for many parcels at once (exports): one fetch per shard. */
+  async entitiesFor(pids: string[]): Promise<Map<string, EntityMatch>> {
+    const out = new Map<string, EntityMatch>();
+    if (!this.manifest.entities) return out;
+    const links = await Promise.all(pids.map(async (pid) => [pid, await this.entityLink(pid)] as const));
+    const docs = new Map<string, EntityRecord | null>();
+    await Promise.all(
+      [...new Set(links.flatMap(([, l]) => (l ? [l.doc] : [])))].map(async (doc) => docs.set(doc, await this.entity(doc))),
+    );
+    for (const [pid, link] of links) {
+      const rec = link ? docs.get(link.doc) : null;
+      if (link && rec) out.set(pid, { link, rec });
+    }
+    return out;
+  }
+
+  /** Owners linked through one officer, manager or registered agent. */
+  async principalGroup(id: number): Promise<PrincipalGroup | null> {
+    const spec = this.manifest.entities?.people;
+    if (!spec || !id) return null;
+    const shard = (id % 16 ** spec.shard_hex).toString(16).padStart(spec.shard_hex, '0');
+    const s = await this.cached(this.peopleShards, shard, () => this.json<Record<string, RawGroup>>(spec.url.replace('{shard}', shard)));
+    const g = s[String(id)];
+    if (!g) return null;
+    return {
+      id,
+      label: g.label,
+      kind: g.kind,
+      statewide: g.statewide,
+      members: g.members.map(([doc, name, roles, shared, pids]) => ({ doc, name, roles, shared: shared === 1, pids })),
+    };
   }
 
   /** One owner-name ('n') or mailing-address ('a') group from the owner index. */

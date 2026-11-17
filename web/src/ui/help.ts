@@ -71,7 +71,15 @@ export class HelpDialog {
         h('li', null, h('b', null, 'What is included: '), 'multifamily, commercial, industrial, vacant commercial and institutional parcels. Single-family homes and individual condo units are not.'),
         h('li', null, h('b', null, 'Parcels, owners and values: '), `${m.source.label} (the Florida Department of Revenue tax roll joined to county parcel maps). “Assessed market value” is the county’s just value, not an appraisal or an asking price.`),
         h('li', null, h('b', null, 'Years held: '), 'counted from the last sale of $100 or more in the county’s records. Where a county lists only the latest transfer and that one was nominal, the hold shows as a minimum, like “12+ yrs”. No sale on record shows as “Not on record”, never as zero.'),
-        h('li', null, h('b', null, 'Owner lookups: '), 'the Sunbiz buttons open the Florida Division of Corporations’ own search. Nothing is copied from it.'),
+        m.entities
+          ? h(
+              'li',
+              null,
+              h('b', null, 'State business records: '),
+              `status, filings, officers, managers and registered agents come from the Florida Division of Corporations’ free quarterly data files (as of ${shortDate(m.entities.file_date)}), matched to owners by name and, where it agrees, mailing address. ${int(m.entities.counts.parcels)} parcels are matched. Each match says how sure it is: check a possible match on Sunbiz before relying on it. Owners are linked when their records share an officer, manager or registered agent; commercial agent services and people who act as agent for many unrelated owners are left out.`,
+            )
+          : null,
+        h('li', null, h('b', null, 'Owner lookups: '), 'the Sunbiz buttons open the Florida Division of Corporations’ own search. The app never queries it.'),
         h('li', null, h('b', null, 'Updated: '), `${shortDate(m.generated_at)}. Public records can lag or contain errors: confirm with the county before you rely on a figure.`),
       ),
     );

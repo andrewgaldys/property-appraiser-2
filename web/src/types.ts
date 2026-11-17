@@ -94,6 +94,30 @@ export interface Manifest {
     /** Uncompressed size of the file, for download progress (absent in older bundles). */
     bytes?: number; url: string; fields: string[] };
   owners: { url: string; shard_hex: number; item_fields: string[]; max_items: number; agent_addr_keys?: number[] };
+  /** Sunbiz records matched to owners (absent until the pipeline's entity stage has run). */
+  entities?: EntitiesManifest;
+}
+
+/** Florida Division of Corporations (Sunbiz) data matched to owners: see pipeline/build_entities.py. */
+export interface EntitiesManifest {
+  schema: string;
+  label: string;
+  source_url: string;
+  /** When the Division made the quarterly file the data comes from. */
+  file_date: string;
+  /** The date annual-report status was judged against. */
+  as_of: string;
+  generated_at: string;
+  links: { url: string; shard_hex: number; fields: string[] };
+  docs: { url: string; shard_hex: number; fields: string[] };
+  people: { url: string; shard_hex: number };
+  /** Matches below this confidence were left out. */
+  min_confidence: number;
+  counts: { entities: number; parcels: number; groups: number; states: Record<string, number> };
+  /** Per county code: parcels, company-owned parcels, matched parcels and how strongly. */
+  coverage: Record<string, { parcels: number; company: number; matched: number; rate: number | null; strong: number; likely: number; possible: number }>;
+  /** Synthetic data for a layout check: the app stamps it. */
+  demo?: boolean;
 }
 
 /** Attributes carried in the vector tiles (short keys, see pipeline/pa2/config.py TILE_FIELDS). */

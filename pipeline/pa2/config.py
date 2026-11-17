@@ -182,6 +182,20 @@ PORTFOLIO_MAX_ITEMS = 500
 # agent / manager / registered-agent address rather than one beneficial owner.
 AGENT_ADDRESS_NAME_THRESHOLD = 25
 
+# Sunbiz (Florida Division of Corporations) entity matching, see pa2/sunbiz.py. Each can be overridden
+# with the environment variable of the same name.
+# The tax roll's owner-name field holds this many characters: a name this long may be cut off.
+ROLL_NAME_CUT = int(os.environ.get("ROLL_NAME_CUT", "30"))
+# Matches below this confidence (0-1) are listed in the pipeline report but not published.
+SUNBIZ_MIN_CONFIDENCE = float(os.environ.get("SUNBIZ_MIN_CONFIDENCE", "0.6"))
+# A person who is registered agent or authorized person on more matched owners than this, or on more
+# Florida entities than this statewide, is treated as a filer (an attorney, an accountant, a filing
+# clerk), not as a principal: through those roles they do not link owners to each other.
+SUNBIZ_RA_PERSON_MAX = int(os.environ.get("SUNBIZ_RA_PERSON_MAX", "10"))
+# A principal's name that appears on more Florida entities than this (statewide) is too common to
+# link owners by name alone: it links only entities where it gives the same address.
+SUNBIZ_COMMON_NAME = int(os.environ.get("SUNBIZ_COMMON_NAME", "15"))
+
 # Zoom ranges. Polygons start at z12; below that the map draws the centroid layer.
 POLYGON_ZOOMS = (12, 15)
 POINT_ZOOMS = (8, 12)

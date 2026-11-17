@@ -3,6 +3,7 @@ import { appendAll, clear, copyButton, h, icon, type Child } from '../dom';
 import { acres, int, money, moneyFull, parcelId, pct, saleDate, sqft, titleCase } from '../format';
 import type { Manifest, ParcelRecord, Portfolio, PortfolioItem, TileProps } from '../types';
 import type { AerialCard } from './aerial';
+import type { EntityCard } from './entityCard';
 import {
   INFO,
   area,
@@ -85,6 +86,7 @@ export class Drawer {
     private manifest: Manifest,
     private handlers: DrawerHandlers,
     private aerial: AerialCard,
+    private entity: EntityCard | null = null,
   ) {
     this.el = root;
     this.top = h('div', { class: 'dr-top' });
@@ -242,6 +244,7 @@ export class Drawer {
               },
               r.owner_name || 'Owner not reported',
             ),
+            this.entity?.enabled ? this.entity.badge : null,
             portfolio ? h('span', { class: 'kf-sub' }, `Portfolio of ${portfolio.exact ? '' : '≥ '}${int(portfolio.total)} parcels (below)`) : null,
             ownerActions,
           ),
@@ -310,6 +313,15 @@ export class Drawer {
   }
 
   private ownerSection(r: ParcelRecord, portfolio: Portfolio | null | undefined, focus: boolean): HTMLElement {
+    // Without a state record (none matched, or the bundle has none): the Sunbiz searches and a note.
+    const lookups = (): Child[] => [
+      lookupRow(r.owner_name, r.county_code),
+      h(
+        'p',
+        { class: 'cap' },
+        'Phone and email are not on the tax roll. For a company, Sunbiz lists the registered agent and the managers or officers, with their addresses.',
+      ),
+    ];
     const block: Child[] = [
       h('div', { class: 'owner-line' }, h('span', { class: 'owner-name-static' }, r.owner_name || 'Owner not reported'), entityBadge(r.owner_name)),
       h(
@@ -319,12 +331,7 @@ export class Drawer {
         h('span', null, r.owner_addr || 'No mailing address on record'),
         r.owner_addr ? copyButton(r.owner_addr, 'mailing address') : null,
       ),
-      lookupRow(r.owner_name, r.county_code),
-      h(
-        'p',
-        { class: 'cap' },
-        'Phone and email are not on the tax roll. For a company, Sunbiz lists the registered agent and the managers or officers, with their addresses.',
-      ),
+      this.entity?.enabled ? this.entity.show(r.parcel_id, lookups) : lookups(),
     ];
     if (portfolio === undefined) {
       block.push(h('div', { class: 'dr-loading sm' }, h('span', { class: 'spinner' }), 'Finding other parcels with this owner'));

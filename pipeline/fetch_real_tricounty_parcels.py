@@ -586,6 +586,10 @@ def main() -> int:
     s = manifest["stats"]
     print(f"published {s['parcels']:,} parcels, ${s['just_value'] / 1e9:.1f}B just value -> {args.out} "
           f"({time.time() - t0:.0f}s)")
+    # State business records for the new roll, when the Sunbiz files are in pipeline/raw/sunbiz/.
+    from build_entities import after_build
+
+    after_build(OUT_DIR / "parcels.parquet", args.out)
     return 0
 
 
