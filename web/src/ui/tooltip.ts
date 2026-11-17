@@ -1,6 +1,7 @@
 import { CLASS_BADGE, CLASS_COLORS, CLASS_FALLBACK, COUNTY_META } from '../config';
 import { clear, h } from '../dom';
 import { int, money } from '../format';
+import { listedLabel } from '../listings';
 import type { Manifest, ParcelRecord, TileProps } from '../types';
 import { holdShort, isNominal, unitsApply } from './facts';
 
@@ -88,6 +89,8 @@ export class Tooltip {
       h('div', { class: 'tt-owner' }, h('span', { class: 'tt-k' }, 'Owner'), ' ', owner || (pending ? '…' : 'Not reported')),
       h('div', { class: 'tt-meta' }, facts.join(' · ')),
     );
+    const listed = listedLabel(p.pid);
+    if (listed) this.el.append(h('div', { class: 'tt-listed' }, listed));
   }
 
   private place(): void {

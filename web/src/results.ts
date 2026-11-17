@@ -1,6 +1,7 @@
 import { BTL_STEPS, CLASS_BADGE, COUNTY_META, LONG_HOLD_YEARS, LOT_STEPS_AC, UNDERBUILT } from './config';
 import { entityLabel, sunbizUrl } from './entity';
 import { parcelId } from './format';
+import { listedSet } from './listings';
 import { mailingLine, type IndexRow, type ParcelIndex } from './parcelIndex';
 import type { Bbox, Filters, OwnerGrouping, OwnerRef, OwnerRow, SearchSet, TileProps, ViewStats } from './types';
 
@@ -103,8 +104,10 @@ export function matcher(f: Filters, search: SearchSet | null, nominal: number, v
   const lot = (LOT_STEPS_AC[f.lotStep] ?? 0) * 43560;
   const btl = BTL_STEPS[f.btlStep] ?? Infinity;
   const pre = new Set(f.presets);
+  const market = listedSet(f.market);
   return (r) => {
     if (pids && !pids.has(r.pid)) return false;
+    if (market && !market.has(r.pid)) return false;
     if (counties && !counties.has(r.co)) return false;
     if (classes && !classes.has(r.cls)) return false;
     if (f.minHold > 0 && (r.hold ?? r.hf ?? -1) < f.minHold) return false;

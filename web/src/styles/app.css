@@ -751,3 +751,65 @@ body.drawer-open .hint, body.profile-open .hint { display: none; }
   .results:not(.open) { bottom: 14px; }
   .hint { bottom: 14px; }
 }
+
+/* ---- Listings: is the property, or a unit in it, on the market (parcel panel) ---- */
+.dr-sec.listings { margin-top: 20px; }
+.dr-sec.listings + .dr-body { margin-top: 0; }
+.ls-count { margin-left: 4px; padding: 0 7px; border-radius: 999px; background: var(--raised); font: 600 12px/18px var(--mono); letter-spacing: 0; color: var(--raised-ink); }
+.ls-badges { display: contents; }
+.badge.ls-badge { border: 1px solid var(--raised); font-weight: 600; cursor: pointer; }
+.badge.ls-badge.sale { background: var(--raised); color: var(--raised-ink); }
+.badge.ls-badge.lease { background: transparent; color: var(--text); }
+.badge.ls-badge.sale:hover { background: #fff; }
+.badge.ls-badge.lease:hover { background: var(--surface-3); }
+.ls-empty-t { margin: 0; font-size: 14.5px; font-weight: 500; color: var(--text); }
+.ls-empty-t + .cap { margin-top: 4px; }
+.listings .lookups { margin-top: 12px; }
+.ls-summary { margin: 0 0 10px; font: 500 13.5px var(--mono); color: var(--text-2); }
+.ls-cards { display: grid; gap: 10px; }
+.ls-card { min-width: 0; padding: 14px; background: var(--surface-2); border: 1px solid var(--line-2); border-radius: var(--r-lg); }
+.ls-card.pending { border-style: dashed; }
+.ls-top { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.ls-tag { padding: 2px 8px; border: 1px solid var(--raised); border-radius: var(--r-sm); font: 600 12px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap; }
+.ls-tag.sale { background: var(--raised); color: var(--raised-ink); }
+.ls-tag.lease { color: var(--text); }
+.ls-scope { font-size: 14.5px; font-weight: 500; color: var(--text); overflow-wrap: anywhere; }
+.ls-chip { padding: 1px 8px; border: 1px solid var(--line-strong); border-radius: 999px; font-size: 12.5px; color: var(--text-2); white-space: nowrap; }
+.ls-chip.pending, .ls-chip.demo { border-color: var(--warn); color: var(--warn); }
+.ls-chip.demo { border-style: dashed; }
+.ls-price { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; margin-top: 12px; }
+.ls-amount { font: 500 21px var(--mono); color: var(--text); overflow-wrap: anywhere; }
+.ls-price.unstated .ls-amount { font: 400 15px var(--font); color: var(--text-2); }
+.ls-unit { font: 13.5px var(--mono); color: var(--muted); }
+.ls-terms { padding: 1px 7px; border: 1px solid var(--line-strong); border-radius: var(--r-sm); font-size: 12.5px; color: var(--text-2); }
+.ls-metrics { list-style: none; display: flex; flex-wrap: wrap; gap: 2px 14px; margin: 6px 0 0; padding: 0; font: 13.5px var(--mono); color: var(--text-2); }
+.ls-metrics li { cursor: help; }
+.ls-facts { margin: 10px 0 0; font-size: 14px; color: var(--text); }
+.ls-title { margin: 8px 0 0; font-size: 14px; font-weight: 500; color: var(--text); overflow-wrap: anywhere; }
+.ls-note { display: -webkit-box; margin: 4px 0 0; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; font-size: 13.5px; line-height: 1.5; color: var(--text-2); }
+.ls-caveat { margin: 10px 0 0; padding: 8px 10px; border: 1px dashed var(--line-strong); border-radius: var(--r); font-size: 13.5px; line-height: 1.45; color: var(--text-2); }
+.ls-contact { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line-2); }
+.ls-who { display: block; font-size: 14px; color: var(--text); overflow-wrap: anywhere; }
+.ls-who-k { margin-right: 7px; font-size: 13px; color: var(--muted); }
+.ls-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.ls-actions:first-child { margin-top: 0; }
+.ls-fine { margin: 10px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--muted); overflow-wrap: anywhere; }
+.ls-more { margin-top: 10px; }
+.ls-demo { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; padding: 8px 10px; border: 1px dashed var(--warn); border-radius: var(--r); font-size: 13.5px; color: var(--warn); }
+.ls-stale { margin: 10px 0 0; }
+.ls-disclaimer { font-size: 12.5px; }
+
+/* ---- Listed parcels on the map: legend, tooltip, the card's other sources ---- */
+.lg-listed { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 12px; }
+.lg-listed .lg-k { margin-right: 4px; }
+.lg-chip { padding: 0 6px; border: 1px solid #f2f2f2; border-radius: 4px; font: 700 12px/18px var(--font); letter-spacing: 0.06em; }
+.lg-chip.solid { background: #f2f2f2; color: #0a0a0a; }
+.lg-chip.line { background: rgba(10, 10, 10, 0.92); color: #f2f2f2; }
+.lg-dash { width: 26px; margin-left: 4px; border-top: 2px dashed #f2f2f2; }
+.tt-listed { display: inline-block; margin-top: 7px; padding: 0 7px; border: 1px solid var(--text); border-radius: var(--r-sm); font: 600 12px/19px var(--mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text); }
+.ls-also { margin: 6px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--text-2); }
+.ls-also a { color: var(--text); text-decoration: underline; text-underline-offset: 2px; }
+.ls-also .icon { margin-left: 3px; vertical-align: -1px; }
+.ls-logo { height: 16px; width: auto; max-width: 90px; margin-right: 7px; padding: 1px 3px; border-radius: 2px; background: #fff; vertical-align: middle; }
+.ls-operator { margin: 10px 0 0; font-size: 13px; color: var(--text-2); }
+.ls-operator b { font-weight: 600; color: var(--text); }

@@ -15,6 +15,8 @@ import type { AppState, Bbox, Manifest, OwnerRef, ParcelRecord, Portfolio, Portf
 import { ActiveFilters } from './ui/activeFilters';
 import { AerialCard } from './ui/aerial';
 import { Brief } from './ui/brief';
+import { ListingsCard } from './ui/listings';
+import { setListedParcels } from './listings';
 import { Drawer } from './ui/drawer';
 import { FilterPanel } from './ui/filters';
 import { HelpDialog } from './ui/help';
@@ -136,6 +138,9 @@ async function boot(): Promise<void> {
   const tooltip = new Tooltip(manifest, (pid) => data.parcel(pid));
   const brief = new Brief();
   const aerial = new AerialCard(manifest, data);
+  const listings = new ListingsCard(manifest, data);
+  // Which parcels are listed, and by which sources: a small file, fetched once so a parcel opens knowing.
+  void data.listingsIndex().catch((err) => console.warn('Listings are unavailable', err));
   let current: { rec: ParcelRecord; portfolio: Portfolio | null } | null = null;
   let token = 0;
 
@@ -150,7 +155,7 @@ async function boot(): Promise<void> {
     onOwnerProfile: () => {
       if (current) void openOwner(refForRecord(current.rec));
     },
-  }, aerial);
+  }, aerial, listings);
 
   // Owner profile: the drawer-sized panel the parcel drawer opens on top of.
   const profile = new OwnerProfile(manifest, {
@@ -263,7 +268,24 @@ async function boot(): Promise<void> {
 
   // Map panel: the basemap switch, what height and color show (FilterPanel), then the legend.
   rail.body('map').prepend(h('div', { class: 'map-style' }, h('div', { class: 'field-label' }, 'Basemap'), new Toolbar(store).el));
-  rail.body('map').append(new Legend(manifest, store).el);
+  const legend = new Legend(manifest, store);
+  rail.body('map').append(legend.el);
+
+  // Listed parcels: the map's tags and outlines, the "On the market" filter, the tables and the legend,
+  // once the listings index is in (fetched at start; nothing shows while no source is connected).
+  void data
+    .listingsIndex()
+    .then((ix) => {
+      setListedParcels(ix);
+      mapc.refreshListings();
+      panel.setListings(ix);
+      legend.setListings();
+      const f = store.get().filters;
+      // A link or saved view with "On the market": run it again now that the listings are known,
+      // or drop it when no source is connected (it could match nothing).
+      if (f.market) store.set({ filters: ix ? { ...f } : { ...f, market: '' } });
+    })
+    .catch(() => undefined); // the parcel panel says the listings could not be checked
 
   // Owners & parcels tables under the map: every matching parcel, grouped into owners.
   /** True while a link or saved screen sets the table: the map keeps its (linked) center. */
@@ -548,7 +570,7 @@ async function boot(): Promise<void> {
     await moved;
     const image = await mapc.captureParcel(rec);
     const aerialImage = await aerial.snapshot();
-    brief.open(rec, portfolio, image, manifest, aerialImage);
+    brief.open(rec, portfolio, image, manifest, aerialImage, listings.current());
   }
 
   // A parcel or owner link pasted into an already-open tab only changes the hash: follow it.

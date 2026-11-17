@@ -1,8 +1,11 @@
 import { APP_NAME, APP_VERSION, CLASS_BADGE, CLASS_SHORT, COUNTY_META } from '../config';
 import { clear, h, icon } from '../dom';
 import { acres, int, money, moneyFull, parcelId, pct, saleDate, shortDate, sqft, titleCase } from '../format';
+import { listingPrice, listingScope, listingSize, type Listing } from '../listings';
 import type { Manifest, ParcelRecord, Portfolio } from '../types';
+import type { ParcelListings } from './listings';
 import {
+  area,
   holdInfo,
   isNominal,
   physicalFacts,
@@ -35,7 +38,14 @@ export class Brief {
     return !this.root.hidden;
   }
 
-  open(r: ParcelRecord, portfolio: Portfolio | null, image: string | null, manifest: Manifest, aerial: string | null = null): void {
+  open(
+    r: ParcelRecord,
+    portfolio: Portfolio | null,
+    image: string | null,
+    manifest: Manifest,
+    aerial: string | null = null,
+    listings: ParcelListings | null = null,
+  ): void {
     clear(this.root);
     const county = COUNTY_META[r.county_code];
     const jv = r.just_value ?? 0;
@@ -139,6 +149,7 @@ export class Brief {
           flags.length ? h('ul', { class: 'bp-flags' }, flags.map((f) => h('li', null, f))) : h('p', { class: 'bp-muted' }, 'None'),
         ),
       ),
+      listings ? this.market(listings) : null,
       h(
         'section',
         { class: 'bp-owner' },
@@ -154,7 +165,7 @@ export class Brief {
                 .join(' and '),
               '.',
             )
-          : h('p', { class: 'bp-muted' }, 'No other parcel in the three-county dataset shares this owner name or mailing address.'),
+          : h('p', { class: 'bp-muted' }, `No other parcel in ${area(manifest).the} shares this owner name or mailing address.`),
         pfItems.length
           ? h(
               'table',
@@ -190,6 +201,7 @@ export class Brief {
         'Assessed market value is the property appraiser’s just value on the FDOR tax roll, not an appraisal. ',
         `Years held = ${manifest.source.as_of_year} − year of the last sale of ${money(manifest.data_quality?.min_sale_price ?? 100)} or more; "N+" marks a minimum where the sale predates the county’s complete records. `,
         'Owner portfolios are resolved by normalized owner name and mailing address and may include unrelated entities that share an agent address. ',
+        listings ? 'Listings are as published by the source named beside each, on the date shown: confirm with the listing broker. ' : '',
         sample ? 'SAMPLE DATA: all parcels, owners and values are synthetic. ' : '',
       ),
     );
@@ -199,6 +211,41 @@ export class Brief {
     document.body.classList.add('brief-open');
     document.addEventListener('keydown', this.onKey);
     printBtn.focus();
+  }
+
+  /** "On the market": the parcel's listings as the sources publish them. */
+  private market({ items, sources }: ParcelListings): HTMLElement {
+    const asking = (l: Listing) => {
+      const p = listingPrice(l);
+      return [p.amount, p.unit, l.terms].filter(Boolean).join(' ');
+    };
+    return h(
+      'section',
+      { class: 'bp-owner bp-market' },
+      h('h2', null, 'On the market'),
+      h(
+        'table',
+        { class: 'bp-pf' },
+        h('thead', null, h('tr', null, ['Offering', 'What', 'Asking', 'Size', 'Listed by', 'Source · updated'].map((c) => h('th', null, c)))),
+        h(
+          'tbody',
+          null,
+          items.map((l) => {
+            const s = sources[l.src];
+            return h(
+              'tr',
+              null,
+              h('td', null, [l.kind === 'sale' ? 'For sale' : 'For lease', l.sub, l.status === 'pending' ? 'Under contract' : null, s?.demo ? 'SAMPLE' : null].filter(Boolean).join(' · ')),
+              h('td', null, [listingScope(l), l.match === 'shared' ? 'at this address, parcel not confirmed' : null].filter(Boolean).join(' · ') || '—'),
+              h('td', { class: 'num' }, asking(l)),
+              h('td', null, listingSize(l).join(' · ') || '—'),
+              h('td', null, [l.agent, l.firm].filter(Boolean).join(', ') || '—'),
+              h('td', null, [s?.name, l.updated ? shortDate(l.updated) : null].filter(Boolean).join(' · ')),
+            );
+          }),
+        ),
+      ),
+    );
   }
 
   close(): void {

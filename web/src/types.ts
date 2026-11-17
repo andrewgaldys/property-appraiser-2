@@ -247,6 +247,9 @@ export type OwnerGrouping = 'name' | 'addr';
 export type ShadeMode = 'class' | 'value' | 'sqft' | 'hold' | 'ltv';
 export type BasemapMode = 'dark' | 'hybrid' | 'split';
 
+/** "On the market": '' = no listing filter; any = for sale or for lease; sale; lease. */
+export type MarketFilter = '' | 'any' | 'sale' | 'lease';
+
 export interface Filters {
   counties: number[]; // empty = all
   classes: string[]; // empty = all
@@ -257,6 +260,8 @@ export interface Filters {
   includeNominal: boolean;
   /** Prospecting presets, all applied together (AND) with the rest. */
   presets: PresetId[];
+  /** Only parcels with a listing (see listings.ts); ignored while no listing source is connected. */
+  market: MarketFilter;
 }
 
 /** How a search set was made, so links and saved screens can rebuild it from the data. */

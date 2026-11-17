@@ -12,9 +12,10 @@ import {
 } from '../config';
 import { appendAll, clear, h, icon, type Child } from '../dom';
 import { compact, int, money, shortDate } from '../format';
+import { MARKET_LABEL, hasListings, listedSet, type ListingsIndex } from '../listings';
 import { nominalMax } from '../map/layers';
 import { loadUi, saveUi, type Store } from '../state';
-import type { AppState, Bbox, Filters, Manifest, ViewStats } from '../types';
+import type { AppState, Bbox, Filters, Manifest, MarketFilter, ViewStats } from '../types';
 import { INFO, countyCodes, coverageDetail, coverageExample, coverageLine } from './facts';
 import { infoTip } from './infotip';
 
@@ -28,10 +29,11 @@ export interface FilterPanelHandlers {
   onHelp(section?: 'coverage'): void;
 }
 
-export type SectionId = 'where' | 'classes' | 'screens';
+export type SectionId = 'where' | 'classes' | 'market' | 'screens';
 const SECTION_DEFAULTS: Record<SectionId, boolean> = {
   where: true,
   classes: true,
+  market: true,
   screens: false,
 };
 /** Other components mount here: the owner signals (step 3 of Filters) and Top owners (Insights). */
@@ -119,6 +121,8 @@ export class FilterPanel {
   private inviewNote!: HTMLElement;
   private resetBtn!: HTMLButtonElement;
   private ctaCount!: HTMLElement;
+  private marketSeg!: { el: HTMLElement; buttons: SegButton<MarketFilter>[] };
+  private marketCap!: HTMLElement;
 
   constructor(
     private mounts: FilterMounts,
@@ -128,6 +132,7 @@ export class FilterPanel {
   ) {
     this.ui.sections = { ...SECTION_DEFAULTS, ...this.ui.sections };
     this.render();
+    this.setListings(null); // hidden until a listing source is connected
     this.sync(store.get());
     store.subscribe((s, prev) => {
       if (s.filters !== prev.filters || s.extrude !== prev.extrude || s.shade !== prev.shade || s.search !== prev.search) this.sync(s);
@@ -270,6 +275,18 @@ export class FilterPanel {
       onchange: () => this.setFilters({ includeNominal: this.nominalToggle.checked }),
     }) as HTMLInputElement;
 
+    this.marketSeg = segmented<MarketFilter>(
+      'On the market',
+      [
+        { value: '', label: 'Any', title: 'Every parcel, listed or not' },
+        { value: 'any', label: 'Listed', title: 'Parcels with a listing for sale or for lease' },
+        { value: 'sale', label: 'For sale', title: 'Parcels listed for sale' },
+        { value: 'lease', label: 'For lease', title: 'Parcels with space listed for lease' },
+      ],
+      (v) => this.setFilters({ market: v }),
+    );
+    this.marketCap = h('p', { class: 'cap' });
+
     this.extrudeSeg = segmented<string>('3D height', EXTRUDE_MODES.map((x) => ({ value: x.id, label: x.label })), (v) =>
       this.store.set({ extrude: v as AppState['extrude'] }),
     );
@@ -325,6 +342,13 @@ export class FilterPanel {
       ),
       this.section('classes', 'Asset class', 2, h('div', { class: 'chips' }, this.allChip, this.chips.map((c) => c.el))),
       this.slots.signals,
+      this.section(
+        'market',
+        'On the market',
+        null,
+        this.marketSeg.el,
+        this.marketCap,
+      ),
       this.section(
         'screens',
         'More filters',
@@ -457,8 +481,23 @@ export class FilterPanel {
     sum('classes', f.classes.length ? `${f.classes.length} of ${this.chips.length}` : 'All', f.classes.length > 0);
     const n = activeScreens(f) + (f.includeNominal ? 1 : 0);
     sum('screens', n ? `${n} on` : 'None', n > 0);
-    const dirty = f.counties.length > 0 || f.classes.length > 0 || n > 0 || f.presets.length > 0 || !!s.search;
+    markSeg(this.marketSeg.buttons, f.market);
+    sum('market', f.market ? MARKET_LABEL[f.market] : 'Any', !!f.market);
+    const dirty = f.counties.length > 0 || f.classes.length > 0 || n > 0 || f.presets.length > 0 || !!f.market || !!s.search;
     this.resetBtn.hidden = !dirty;
+  }
+
+  /** The listings index is in: offer "On the market" when something is listed (hidden otherwise). */
+  setListings(ix: ListingsIndex | null): void {
+    const sec = this.sections.get('market')!.el;
+    sec.hidden = !hasListings();
+    if (!ix || sec.hidden) return;
+    const n = (k: 'any' | 'sale' | 'lease') => listedSet(k)?.size ?? 0;
+    for (const b of this.marketSeg.buttons) {
+      if (b.value) b.el.title = `${int(n(b.value))} ${n(b.value) === 1 ? 'parcel' : 'parcels'} ${MARKET_LABEL[b.value].toLowerCase()}`;
+    }
+    const names = [...new Set(ix.sources.map((s) => s.name))];
+    this.marketCap.textContent = `${int(n('any'))} listed parcels: ${int(n('sale'))} for sale, ${int(n('lease'))} with space for lease. From ${names.join(', ')}.`;
   }
 
   /** Totals for the view; null while they are still being loaded. */

@@ -1,5 +1,6 @@
 import type { GeoJSONSourceSpecification } from '@maplibre/maplibre-gl-style-spec';
 import { RESIDENTIAL_CLASSES } from './config';
+import { decodeListings, type Listing, type ListingsIndex } from './listings';
 import { buildIndex, type ParcelIndex, type RawIndex } from './parcelIndex';
 import type { Manifest, ParcelRecord, Portfolio, PortfolioGroup, PortfolioItem } from './types';
 
@@ -132,6 +133,43 @@ export class DataStore {
       });
     }
     return this.parcelIx;
+  }
+
+  private listingsIx: Promise<ListingsIndex | null> | null = null;
+  private listingShards = new Map<string, Promise<Record<string, unknown[][]>>>();
+  /** The listings index once it has loaded: null when no listing source is connected, undefined before. */
+  loadedListings: ListingsIndex | null | undefined = undefined;
+
+  /**
+   * Which parcels have a for-sale or for-lease listing, and where the listings come from.
+   * Resolves to null when no listing source is connected (or the bundle predates listings);
+   * rejects when the file could not be fetched, so "not connected" is never a guess.
+   */
+  listingsIndex(): Promise<ListingsIndex | null> {
+    if (!this.listingsIx) {
+      this.listingsIx = (async () => {
+        const res = await fetch(this.url('listings/index.json'), { cache: 'no-cache' });
+        // A bundle without listings: a 404, or a dev server answering with its HTML fallback.
+        const missing = res.status === 404 || (res.ok && !/json/i.test(res.headers.get('content-type') ?? 'json'));
+        if (!missing && !res.ok) throw new Error(`${res.status} ${res.statusText}: listings/index.json`);
+        const ix = missing ? null : ((await res.json()) as ListingsIndex);
+        this.loadedListings = ix && String(ix.schema).startsWith('pa2-listings/') && ix.sources?.length ? ix : null;
+        return this.loadedListings;
+      })();
+      this.listingsIx.catch(() => {
+        this.listingsIx = null;
+      });
+    }
+    return this.listingsIx;
+  }
+
+  /** The listings matched to one parcel (empty when it has none). */
+  async parcelListings(pid: string): Promise<{ index: ListingsIndex | null; items: Listing[] }> {
+    const index = await this.listingsIndex();
+    if (!index || !index.parcels[pid]) return { index, items: [] };
+    const shard = fnv1a32(pid).slice(0, index.shard_hex);
+    const rows = await this.cached(this.listingShards, shard, () => this.json<Record<string, unknown[][]>>(index.url.replace('{shard}', shard)));
+    return { index, items: decodeListings(index.fields, rows[pid]) };
   }
 
   /** One owner-name ('n') or mailing-address ('a') group from the owner index. */

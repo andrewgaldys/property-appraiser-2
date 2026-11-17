@@ -19,6 +19,7 @@ import {
   type Fact,
 } from './facts';
 import { infoTip } from './infotip';
+import type { ListingsCard } from './listings';
 import { entityBadge, lookupRow } from './lookups';
 
 /** Asset-class badge: the class color carries identity, the label repeats it in text. */
@@ -85,13 +86,14 @@ export class Drawer {
     private manifest: Manifest,
     private handlers: DrawerHandlers,
     private aerial: AerialCard,
+    private listings: ListingsCard,
   ) {
     this.el = root;
     this.top = h('div', { class: 'dr-top' });
     this.body = h('div', { class: 'dr-body' });
-    // The aerial card sits between the key facts and the detail sections, and is never rebuilt
-    // (its map persists across selections).
-    this.scroller = h('div', { class: 'dr-scroll' }, this.top, aerial.el, this.body);
+    // The aerial card and the listings sit between the key facts and the detail sections, and are
+    // never rebuilt: the aerial's map persists across selections, and listings load on their own.
+    this.scroller = h('div', { class: 'dr-scroll' }, this.top, aerial.el, listings.el, this.body);
     this.foot = h(
       'footer',
       { class: 'dr-foot' },
@@ -137,6 +139,7 @@ export class Drawer {
     clear(this.top);
     clear(this.body);
     this.foot.hidden = true;
+    this.listings.hide();
     appendAll(this.top, this.backButton());
     this.top.append(
       h(
@@ -156,6 +159,7 @@ export class Drawer {
     clear(this.body);
     this.foot.hidden = true;
     this.aerial.hide();
+    this.listings.hide();
     this.top.append(h('p', { class: 'dr-error' }, message));
     this.open();
   }
@@ -172,6 +176,7 @@ export class Drawer {
     const hold = holdInfo(r, m);
     const sig = signals(r, m);
     this.aerial.show(r.parcel_id, r.bbox);
+    this.listings.show(r);
 
     // ---- Header + key facts: the decision-relevant read, top to bottom -----------------------
     const useDesc = r.use_description || CLASS_BADGE[r.asset_class] || r.asset_class;
@@ -201,7 +206,8 @@ export class Drawer {
       h(
         'header',
         { class: 'dr-head' },
-        h('div', { class: 'dr-badges' }, classBadge(r.asset_class), h('span', { class: 'badge' }, county?.badge ?? String(r.county_code))),
+        // The listings card owns its badges ("For sale", "For lease") and fills them in when it knows.
+        h('div', { class: 'dr-badges' }, classBadge(r.asset_class), h('span', { class: 'badge' }, county?.badge ?? String(r.county_code)), this.listings.badges),
         h('h2', { class: 'dr-addr' }, r.site_address || 'No site address'),
         h('div', { class: 'dr-city' }, [titleCase(r.site_city), r.site_zip ? `FL ${r.site_zip}` : 'FL'].filter(Boolean).join(', ')),
         h(

@@ -12,13 +12,14 @@ A Python pipeline pulls the parcels from the Florida Statewide Cadastral layer (
 - **Prospecting screens**: five presets a broker can mix (long-term holders, underbuilt sites, out-of-area owners, small portfolio owners, estate / trust owned) on top of every other filter; named **saved screens**; and a page link that always reopens the exact screen.
 - **Owners & parcels tables** (under the map): every parcel matching the screen and search, across all six counties or only the map view, grouped into owners with related entities, parcel counts, value, building SF, asset classes, prospecting signals, longest and average hold, and mailing address. Sortable, linked to the map both ways, and exportable to CSV for a CRM or mail merge.
 - **Sunbiz lookups**: every owner in the parcel panel, the owner profile and the CSV exports carries a link to Florida's state business records (the entity itself, or for a person the companies that list them), plus an owner-type badge read from the name.
+- **Listings**: every parcel on the market, from every licensed feed connected at once (MLS feeds over the RESO Web API, Resimplifi's API, your own files). The map tags listed parcels FOR SALE / FOR LEASE with a dashed outline, *On the market* in Filters shows only them, and the parcel panel lists each offering with its asking price or rent, who to call, its source and date. The same listing from several sources shows once. With no source connected nothing changes and the panel says so rather than "none" (see *Listings*).
 - **Owner profiles**: everything an owner holds in the six counties, a mini map, an acquisition timeline (last priced sale of each parcel), average hold, asset-class mix, mailing addresses and related entities; CSV export of the holdings.
 - **Map first**: the page opens as the map, a search box and a slim rail. Filters, Insights, Saved screens and Map options each open from the rail as one pop-up panel at a time; the Owners list and the guide open from it too. On phones the rail is a bottom bar and panels rise from it.
 - **Search** (top-left of the map, or press `/`): owner names, site addresses, cities, parcel IDs (dashed or not), property types and shared mailing addresses. Results come back grouped as owners, mailing addresses and parcels; pick one parcel to fly to it, or show an owner, a mailing address or every match on the map as a removable filter.
 - **Top owners in view**: who controls the parcels on screen, after filters, ranked by assessed value, with each owner's share and the top five's combined share (ownership concentration). Group by owner name, or by mailing address to see the sponsor behind single-asset LLCs. Click an owner to open their most valuable parcel and spotlight the portfolio.
 - **Panels** (from the rail). *Filters*: a guided flow of *01 Location* (any mix of counties, north to south, and each county's largest markets), *02 Asset class*, *03 Owner signals*, then *More filters* (minimum years held, minimum lot size, maximum building-to-land value, nominal-value parcels), with a **See matching owners** button and the match count pinned at the bottom. *Insights*: live totals for the map view and Top owners. *Saved*: saved screens and four one-click starter screens. *Map*: basemap, satellite lens, what height and color show, and the legend. Explanations sit behind ⓘ buttons, and **Help** (or the ? key) explains the workflow, the map and each county's data coverage.
 - **Applied filters** show as removable chips beside the search box ("Showing …"), with *Reset all*, and the Filters button carries their count; when nothing matches, the map says so and offers a reset. A one-line first-visit strip points to the starter lists and the guide.
-- **Property drawer**, most decision-relevant first: address, asset class and use, then assessed market value, building SF, lot, residential units, last sale, years held and owner; then the aerial, value and building details, sale and hold, and the **true-owner portfolio** across all three counties (matched on normalized owner name *or* mailing address). Identifiers and legal text fold into *More details*; empty fields are left out.
+- **Property drawer**, most decision-relevant first: address, asset class and use (with *For sale* / *For lease* badges when it is listed), then assessed market value, building SF, lot, residential units, last sale, years held and owner; then the aerial, **listings**, value and building details, sale and hold, and the **true-owner portfolio** across all six counties (matched on normalized owner name *or* mailing address). Identifiers and legal text fold into *More details*; empty fields are left out.
 - One-click, print-styled **Property Brief** (Letter, Save as PDF) with a 3D view and an aerial, plus shareable parcel links (`#…&p=<parcel id>`).
 
 > `web/public/data/` holds real public tax-roll records, including owner names and owner mailing addresses as the county property appraisers publish them.
@@ -55,9 +56,12 @@ pipeline/
   generate_sample_data.py          synthetic sample -> web/public/data (+ --emit-raw: FDOR-format test files)
   build_tiles.py                   re-tile from pipeline/out/parcels.parquet (e.g. after installing tippecanoe)
   sync_postgis.py                  optional: load the joined table into PostGIS / Supabase
-  pa2/                             schema, DOR use codes, owner resolution, MVT encoder, PMTiles writer, publisher
+  import_listings.py               for-sale / for-lease listing files -> web/public/data/listings (see Listings)
+  fetch_listings.py                licensed market feeds (Resimplifi API, an MLS's RESO Web API) -> pipeline/listings, then import
+  listings/                        where those files go (git-ignored), with a column guide and a template
+  pa2/                             schema, DOR use codes, owner resolution, listings matcher, MVT encoder, PMTiles writer, publisher
 web/                               Vite + TypeScript + MapLibre GL JS 6 + pmtiles
-  public/data/                     manifest.json, parcels.pmtiles, points.pmtiles, parcels/*.json, owners/*.json, index.json
+  public/data/                     manifest.json, parcels.pmtiles, points.pmtiles, parcels/*.json, owners/*.json, index.json, listings/
 .github/workflows/deploy.yml       build web/ and publish to GitHub Pages
 ```
 
@@ -309,6 +313,88 @@ Opening a parcel shows a **Look up on Sunbiz** button under the owner, and again
 - **Owner type** (LLC, Corporation, Partnership, Trust or estate, Individual, Government, Organization) is read from the name alone ([web/src/entity.ts](web/src/entity.ts)) and shown as a badge only when the name says so; a cut-off company name gets no badge.
 - **What it is not.** Nothing is copied or scraped from Sunbiz, so the app shows no status, registered agent or officers of its own. The sanctioned source for that is the Division's free bulk data (*Data Downloads → Quarterly Data → Corporate Data*, `cordata.zip`, fixed-width records with status, addresses, registered agent and officers), downloaded from its data portal with the public login the Division posts. Matching those records to owner names is the next step toward contact information.
 
+## Listings
+
+Opening a parcel shows a **Listings** section under the aerial: is the whole property for sale, is a suite or unit in it for lease, at what asking price or rent, and who to call. A listed parcel also carries a *For sale* or *For lease* badge at the top of the panel, and the print brief gets an *On the market* table.
+
+**Listings are not public records.** Tax rolls and deeds are published by the counties; listings belong to the brokers and the sites that carry them. So the site shows a listing only when it comes from a source it is licensed to use, and it never fetches one itself:
+
+| Source | Can it be used? |
+|---|---|
+| Your own brokerage's listings | Yes. They are yours. |
+| An MLS feed (MIAMI REALTORS + BeachesMLS) | Yes, as a member, with your broker's approval and under the MLS's display rules (IDX). The two have merged and offer their subscribers one combined feed; MIAMI REALTORS delivers its feed over a RESO Web API (Bridge for agents, Trestle for brokers). |
+| A licensed data vendor's API (Resimplifi, for one) | Yes, within its licence. Resimplifi's public terms allow no public display without its written permission, so the licence has to say so. |
+| LoopNet / CoStar, Crexi and other listing sites | No. Their terms bar copying listings into another product, by script or by hand, and using their data in a competing one (LoopNet Terms of Use, revised May 7, 2025; Crexi Customer Terms of Service, October 28, 2024). |
+
+Each card states what the source states and nothing more:
+
+- **For sale / For lease**, with *Sublease*, *Auction*, *For sale or lease* or *Under contract* when the source says so, and **Entire property** or the suite, unit or bay on offer. A lease with no suite named does not claim to be the whole property.
+- **Asking price or rent** as listed (`$38.00 / SF / yr`, `$28.00–$34.50 / SF / yr`, `$9,800 / mo`, `$24,000 / AC / yr`, or the source's own words: "Call for offers"). A rent with no basis reads "basis not stated"; a missing price reads "Price not stated". Neither is ever filled in.
+- **Worked-out figures**, each with its formula on hover: price per SF (on the listing's area, else "on tax-roll area"), price per unit, asking price as a multiple of the assessed market value, monthly rent from a per-SF rate and the reverse.
+- **Who lists it**, a link to the listing, and in small print the source, the date it was last updated there and how it was matched to the parcel.
+
+The section has three honest states: listings; *No listing on file for this parcel*, naming the sources it checked and their dates; and *No listing source connected*, which is what the site shows until a source is imported. In every state a **Search the web for this address** button opens a web search for the address with "for sale" and "for lease" in a new tab; nothing is copied back.
+
+### Importing listings
+
+Put listing files in `pipeline/listings/` (CSV or JSON; [column guide](pipeline/listings/README.md), [template](pipeline/listings/TEMPLATE.csv)) and run:
+
+```bash
+pipeline/.venv/bin/python pipeline/import_listings.py
+```
+
+That writes `web/public/data/listings/` (`index.json`: the sources and which parcels are listed; small shards with the listings themselves), separate from the parcel bundle so listings can be refreshed in seconds without a rebuild. `--dry-run` reports without writing, and `--clear` goes back to "No listing source connected". Files in `pipeline/listings/` are git-ignored; what is published is the matched output.
+
+### Market-wide feeds
+
+To show what is on the market across the whole map, not one firm's listings, connect a feed and let it refresh itself:
+
+```bash
+pipeline/.venv/bin/python pipeline/fetch_listings.py --check
+```
+
+```bash
+pipeline/.venv/bin/python pipeline/fetch_listings.py
+```
+
+The first says which feeds are set up; the second pulls each one into `pipeline/listings/feed_<name>.json` and runs the import. Credentials come from the environment, never from a file in the repo ([pipeline/pa2/feeds.py](pipeline/pa2/feeds.py)):
+
+| Feed | What it covers | Needs |
+|---|---|---|
+| `resimplifi` | Resimplifi's commercial listing API: sale and lease, with a row per available suite, queried one county box at a time | `RESIMPLIFI_API_KEY`, and a licence that allows display on this site |
+| `trestle` | Your MLS's listings over the RESO Web API on Trestle (brokers at MIAMI REALTORS) | `TRESTLE_CLIENT_ID`, `TRESTLE_CLIENT_SECRET` |
+| `bridge` | The same on Bridge (agents at MIAMI REALTORS) | `BRIDGE_SERVER_TOKEN`, `BRIDGE_DATASET` |
+| `spark` | An MLS on Flexmls, through FBS's Spark API (BeachesMLS uses Flexmls). 25 records a request, or 1,000 with a replication key (`SPARK_REPLICATION=on`) | `SPARK_ACCESS_TOKEN` |
+| `reso-<key>` | Any other MLS's RESO Web API, such as the Indian River County MLS: its Property address and a token (or OAuth client credentials), one JSON object per MLS | `RESO_FEEDS` |
+
+**All of them at once.** Every feed that is set up is pulled on each run. The six counties need three MLS sources to be covered: MIAMI REALTORS and BeachesMLS (merged, with one combined subscriber feed) for Miami-Dade, Broward, Palm Beach, Martin and St. Lucie, and the Indian River County MLS (run by the Realtors Association of Indian River County, which charges for its feed) for Indian River. Resimplifi adds commercial listings that sit only on brokerage websites.
+
+From an MLS feed the pull is active and active-under-contract listings of the property types this map's parcels can carry, minus anything the seller withheld from internet display. Every MLS names its types its own way ("CommercialSale", "Commercial/Industrial", "Income", "Vacant Land"), so the connector reads them from the MLS's own metadata, or its Lookup list, and keeps those whose words say commercial, industrial, income, land, business, office, retail or multifamily (never homes, rentals or condo units). When an MLS lists neither, every active listing is fetched and sorted locally: slower, but no type is missed. A type naming lease or rental is a lease; any other is for sale. `MLS_PROPERTY_TYPES` and `MLS_STATUSES` (or `SPARK_…`) set exact values instead. `MLS_SOURCE_NAME`, `MLS_DISCLAIMER`, `MLS_SOURCE_URL` and `MLS_LOGO_URL` (or `SPARK_…`) set how the panel names the MLS, the notice it requires and its logo; `LISTINGS_OPERATOR` and `LISTINGS_OPERATOR_CONTACT` name the brokerage the site shows listings under.
+
+**The same listing in several sources** shows once. When two sources carry the same offering on a parcel (the whole property for sale or for lease, or the same suite), the card shows the more authoritative source's data unchanged (your own listings, then an MLS, then a vendor, then the most recently updated) and names the others beneath it, each with its own link and date. Data is never mixed across sources, which MLS rules require. A lease that names no suite is never merged, since it cannot be told apart from another space in the building.
+
+**Refreshing on its own.** Put the same names in the repository's Actions *secrets* and the deploy workflow pulls the feeds on every build; set the repository *variable* `LISTINGS_REFRESH` to `on` and it also rebuilds every six hours. With no secrets the step does nothing and the committed listings ship as they are. A feed that fails, comes back empty, or returns under half of its last pull stops the run before anything is published, so an outage never wipes listings off the map (the site keeps its last good deployment).
+
+**On the map.** Listed parcels carry a FOR SALE (solid) or FOR LEASE (outlined) tag from zoom 13, a dashed outline on the ground, and a ring on their dot when zoomed out. The Map panel's legend explains them, a parcel's hover card says "For sale", and *On the market* in Filters (Any · Listed · For sale · For lease) narrows the map, the totals, the owners list and the CSV to listed parcels; links and saved screens keep it (`mk=`). None of this appears until a source is connected.
+
+**What "the whole market" means.** No feed has every listing. An MLS feed has what its members entered (the commercial MLS claimed about 5,000 properties at its 2019 launch); Resimplifi says it syncs with brokerages and puts its coverage at up to 70 to 80% of a market for its fullest product. Listings that exist only on LoopNet or Crexi cannot be brought in. The panel names the sources it checked for that reason, and keeps the web search button.
+
+**Before an MLS feed goes live** the site has to meet the MLS's IDX rules. From BeachesMLS's (version 10-19-23): refresh at least every 12 hours (§20.2.5); the listing firm and its phone or email on every listing (§20.3.3); the MLS's logo and its notice (§20.3.6, §20.3.7); the name of the brokerage that runs the site, readily visible (§20.2.7); no seller or occupant names (§20.3.10); nothing but display, on a site under the member's control, with an activity log the MLS can ask for (§20.2.2, §20.6). The cards already carry the listing firm, contact, source and notice text. Still to add for an MLS source: the MLS logo, the operating brokerage's name on the site, and an activity log, which a static site does not have. One question to put to the MLS before applying: this panel shows the owner of record from the tax roll next to a listing, and §20.3.10 bars displaying the seller's name.
+
+The connectors were written from each provider's published API description and tested against local stand-ins for those APIs (paging, retry on rate limits, token exchange, property-type naming, the safety stops). They have not yet run against the live services: the first real pull needs a look.
+
+How a row finds its parcel ([pipeline/pa2/listings.py](pipeline/pa2/listings.py)):
+
+1. **Parcel ID** (folio / PCN), dashes, spaces and lost leading zeros forgiven.
+2. **Street address**, normalized the way the six tax rolls write theirs (`Avenue` / `AVE`, `14th` / `14`, `State Road 7` / `SR 7`, `US Highway 1` / `US 1`), with the ZIP or city agreeing. A number inside a parcel's range (`5865` for `5861-5869 NW 19 ST`) counts, and a suite picks the unit parcel where the roll has one.
+3. Several parcels of **one owner** at the address: one offering, shown on each.
+4. Parcels of **different owners** at the address (office and warehouse condos; about 9% of parcels, mostly in Broward and Palm Beach): shown on each as *Listed at this address*, with a note that it may be for another one, unless a parcel ID or unit settles it.
+5. Everything else, and every closed, expired or withdrawn row, is **left out** and written to `pipeline/out/listings_report.csv` with the reason.
+
+Checked against the roll itself, on 30,000 sampled parcels with their addresses respelled the way listings spell them: 2,111 have no house number on the roll and cannot be matched by address at all (use the parcel ID). Of the other 27,889, 94.3% matched back to the right parcel or its same-owner group, 3.7% came back as *Listed at this address* (rule 4, the right parcel among them), 2.1% were left out (nearly all at addresses that more than 60 parcels share), and none matched a wrong parcel. Parcel IDs typed with dashes, spaces or lost leading zeros matched 8,000 of 8,000.
+
+Limits: listings are only as current as the last import (each source's date is shown, with a warning past 30 days). A lease rate under $100 marked per month or per year shows with its basis not stated: MLS feeds often put a per-SF rate there, and the panel does not assume it. An MLS or vendor source usually requires its own notice and the listing firm's name beside each listing (`disclaimer` in the source's `.meta.json`), and MLS display rules typically also set how often the data must be refreshed and ask for safeguards against bulk copying, which a static site may not meet as it stands: read your MLS's rules, and get your broker's approval, before publishing a feed. The RESO field names are mapped but have been tried only on made-up rows, not yet on a live feed. The site links to LoopNet nowhere: its terms allow links to a listing only from sites that are not its competitors.
+
 ## Top owners on the map
 
 The Insights panel ranks the owners of the parcels in the map view, after every filter, by assessed market value: each row shows the owner, parcel count, residential units, value and share of the value in view, with a bar scaled to the leader.
@@ -390,6 +476,7 @@ This creates `pa2_parcels` (indexed), the view `pa2_owner_portfolios` and the fu
 - Last-sale prices are as recorded: a deed covering several parcels may carry the whole package's price on each of them.
 - Condo units (004) and individual mobile homes (002) are excluded by default; see the opt-in flags.
 - Not yet included: comps, and entity details from Sunbiz's bulk data (the app links to Sunbiz instead; see *Sunbiz lookups*). Search matches word beginnings, not misspellings.
+- Listings: the section, the importer, the matcher and the feed connectors are in place, but no listing source is connected yet (each needs a licence and credentials), so the live site says "No listing source connected" on every parcel. Listed parcels are not yet a filter or a map layer.
 - Wide views are heavy: at zoom 8 the map draws every parcel as a dot, and the tile that holds Miami and Fort Lauderdale is about 2.4 MB. Thinning the low-zoom tiles (with exact matches drawn from the index) is the next step if coverage grows.
 - Saved screens stay in the browser that saved them until a backend replaces `LocalScreenRepository`; share a screen with its link.
 - Prospecting flags read names and mailing addresses as the roll publishes them: a trust owned through an LLC is not flagged, and a local owner who mails tax bills to an out-of-state office is.

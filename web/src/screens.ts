@@ -1,5 +1,6 @@
 import { BTL_STEPS, CLASS_SHORT, COUNTY_META, DEFAULT_FILTERS, LOT_STEPS_AC, PRESETS, PRESET_IDS } from './config';
-import type { ExtrudeMode, Filters, OwnerGrouping, PresetId, SearchSpec, ShadeMode } from './types';
+import { MARKET_LABEL } from './listings';
+import type { ExtrudeMode, Filters, MarketFilter, OwnerGrouping, PresetId, SearchSpec, ShadeMode } from './types';
 
 /**
  * A "screen": everything that decides which parcels and owners a broker is looking at. The same
@@ -68,7 +69,7 @@ export class LocalScreenRepository implements ScreenRepository {
 // ---- Links ------------------------------------------------------------------------------------
 
 /** Hash keys a screen writes (MapLibre owns `map=`; the app owns `p=` parcel and `o=` owner). */
-export const SCREEN_KEYS = ['co', 'cl', 'hold', 'lot', 'btl', 'nom', 'pre', 'q', 'g', 'x', 'c', 't', 'sc'] as const;
+export const SCREEN_KEYS = ['co', 'cl', 'hold', 'lot', 'btl', 'nom', 'pre', 'mk', 'q', 'g', 'x', 'c', 't', 'sc'] as const;
 
 const nearest = (steps: number[], v: number): number => {
   let best = 0;
@@ -89,6 +90,7 @@ export function screenParams(s: ScreenState): Partial<Record<(typeof SCREEN_KEYS
   if (f.btlStep > 0) out.btl = String(BTL_STEPS[f.btlStep]);
   if (f.includeNominal) out.nom = '1';
   if (f.presets.length) out.pre = f.presets.join(',');
+  if (f.market) out.mk = f.market;
   if (s.search) out.q = s.search.kind === 'query' ? `q:${s.search.q}` : s.search.kind === 'owner' ? `owner:${s.search.name}` : `mail:${s.search.label}`;
   if (s.ownerGroup === 'addr') out.g = 'addr';
   if (s.extrude && s.extrude !== 'value') out.x = s.extrude;
@@ -124,6 +126,7 @@ export function paramsScreen(get: (k: string) => string | null): ScreenState | n
     btlStep: btl ? nearest(BTL_STEPS.map((b) => (Number.isFinite(b) ? b : 1e9)), btl) : 0,
     includeNominal: get('nom') === '1',
     presets: list('pre').filter((p): p is PresetId => PRESET_IDS.includes(p as PresetId)),
+    market: marketValue(get('mk')),
   };
   const x = get('x');
   const c = get('c');
@@ -138,10 +141,16 @@ export function paramsScreen(get: (k: string) => string | null): ScreenState | n
   };
 }
 
+/** A link's or a saved view's "On the market" value, if it is one. */
+export function marketValue(v: unknown): MarketFilter {
+  return v === 'any' || v === 'sale' || v === 'lease' ? v : '';
+}
+
 /** "Long-term holders · Multifamily 10+ · Palm Beach · held 10+ yrs". */
 export function describeScreen(s: ScreenState): string {
   const f = s.filters;
   const parts: string[] = [];
+  if (f.market) parts.push(MARKET_LABEL[f.market]);
   for (const p of f.presets) parts.push(PRESETS.find((x) => x.id === p)?.label ?? p);
   for (const c of f.classes) parts.push(CLASS_SHORT[c] ?? c);
   for (const c of f.counties) parts.push(COUNTY_META[c]?.name ?? String(c));

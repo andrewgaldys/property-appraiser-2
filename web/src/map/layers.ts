@@ -22,6 +22,7 @@ import {
   RAMP_SELECTED,
   UNDERBUILT,
 } from '../config';
+import { listedGroups, listedPids } from '../listings';
 import type { AppState, ExtrudeMode, Filters, Manifest, OwnerRef, SearchSet, Selection, ShadeMode } from '../types';
 
 export const SRC_POLY = 'parcels';
@@ -33,6 +34,14 @@ export const L_RIM = 'parcel-rim';
 export const L_POINTS = 'parcel-points';
 export const L_LABELS = 'parcel-labels';
 export const PARCEL_LAYERS = [L_FLAT, L_OUTLINE, L_3D, L_RIM, L_POINTS, L_LABELS];
+/** Listed parcels (see listingLayers): a dashed outline, a ring on the dot, a "FOR SALE" / "FOR LEASE" tag. */
+export const L_LISTED_EDGE = 'listed-edge';
+export const L_LISTED_RING = 'listed-ring';
+export const L_LISTED_TAG = 'listed-tag';
+export const LISTING_LAYERS = [L_LISTED_EDGE, L_LISTED_RING, L_LISTED_TAG];
+/** Tag backgrounds, drawn in controller.ts (addListingChips). */
+export const CHIP_SOLID = 'pa2-chip-solid';
+export const CHIP_LINE = 'pa2-chip-line';
 /**
  * Rim features (`e: 1`, max-zoom polygon tiles only) are a narrow band inside each parcel
  * boundary, extruded a hair above the 3D block so roofs get an outline. Every other polygon
@@ -240,6 +249,7 @@ export function filterExpr(
     all.push(['<=', num('btl', 1e9), btl]);
     if (!f.includeNominal) all.push(['>=', num('jv', 0), nominal]);
   }
+  if (f.market) all.push(pidIn(listedPids(f.market)));
   for (const p of f.presets) {
     if (p === 'long') all.push(['>=', HOLD_OR_FLOOR, LONG_HOLD_YEARS]);
     else if (p === 'underbuilt')
@@ -265,6 +275,88 @@ export function extrusionOpacity(s: AppState, polyMin: number): Expr {
 
 export function rimOpacity(s: AppState, rimMin: number): Expr {
   return fade(rimMin, rimMin + 0.4, s.basemap === 'hybrid' ? 0.9 : 0.95);
+}
+
+/** `pid` is one of these (a lookup table, cheap even for thousands). An empty list matches nothing. */
+function pidIn(pids: string[]): Expr {
+  return ['match', ['get', 'pid'], pids.length ? pids : ['\u0000'], true, false] as Expr;
+}
+
+/** "FOR SALE" / "FOR LEASE" / "FOR SALE · LEASE" by parcel; a solid chip when it is for sale, an outlined one for lease only. */
+function byListing<T>(sale: T, lease: T, both: T, none: T): Expr {
+  const g = listedGroups();
+  const out: unknown[] = ['match', ['get', 'pid']];
+  if (g.saleOnly.length) out.push(g.saleOnly, sale);
+  if (g.leaseOnly.length) out.push(g.leaseOnly, lease);
+  if (g.both.length) out.push(g.both, both);
+  if (out.length === 2) return ['literal', none] as unknown as Expr;
+  out.push(none);
+  return out as Expr;
+}
+
+/** The screen's filter, narrowed to listed parcels, for the listing layers. */
+export function listingFilter(f: Filters, nominal: number, search: SearchSet | null): FilterSpecification {
+  return ['all', filterExpr(f, 'body', nominal, search), pidIn(listedPids('any'))] as FilterSpecification;
+}
+
+export const listingTagText = (): Expr => byListing('FOR SALE', 'FOR LEASE', 'FOR SALE · LEASE', '');
+export const listingTagIcon = (): Expr => byListing(CHIP_SOLID, CHIP_LINE, CHIP_SOLID, '');
+export const listingTagColor = (): Expr => byListing('#0a0a0a', '#f2f2f2', '#0a0a0a', '#f2f2f2');
+
+/**
+ * Listed parcels stand out at every zoom: a ring around the dot while zoomed out, a dashed outline
+ * on the ground and a tag above the parcel once the parcels are drawn. Hidden until a listing source
+ * is connected (no parcel is listed). Tags give way to each other, never to the house numbers' layer.
+ */
+export function listingLayers(manifest: Manifest, s: AppState, vector: boolean): LayerSpecification[] {
+  const polyMin = manifest.tiles.polygons.minzoom;
+  const poly = vector ? { source: SRC_POLY, 'source-layer': manifest.tiles.polygons.layer } : { source: SRC_POLY };
+  const pts = vector ? { source: SRC_PTS, 'source-layer': manifest.tiles.points.layer } : { source: SRC_PTS };
+  const filter = listingFilter(s.filters, nominalMax(manifest), s.search);
+  return [
+    {
+      id: L_LISTED_EDGE, type: 'line', ...poly, minzoom: polyMin, filter,
+      layout: { 'line-join': 'round' },
+      paint: {
+        'line-color': '#f2f2f2',
+        'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1, 14, 1.8, 16, 2.6],
+        'line-dasharray': [2, 1.4],
+        'line-opacity': fade(polyMin, polyMin + 0.6, 0.95),
+      },
+    },
+    {
+      id: L_LISTED_RING, type: 'circle', ...pts, maxzoom: polyMin + 1, filter,
+      paint: {
+        'circle-color': 'rgba(0,0,0,0)',
+        'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 4, 10, 5.6, 12, 8],
+        'circle-stroke-color': '#f2f2f2',
+        'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 8, 1.1, 12, 1.6],
+        'circle-stroke-opacity': ['interpolate', ['linear'], ['zoom'], polyMin + 0.2, 0.95, polyMin + 1, 0],
+        'circle-pitch-alignment': 'map',
+      },
+    },
+    {
+      id: L_LISTED_TAG, type: 'symbol', ...pts, minzoom: 13, filter,
+      layout: {
+        'text-field': listingTagText(),
+        'text-font': ['Noto Sans Bold'],
+        'text-size': ['interpolate', ['linear'], ['zoom'], 13, 9.5, 17, 11],
+        'text-letter-spacing': 0.1,
+        'text-anchor': 'bottom',
+        'text-offset': [0, -1.5],
+        'icon-image': listingTagIcon(),
+        'icon-text-fit': 'both',
+        'icon-text-fit-padding': [3, 7, 3, 7],
+        'symbol-sort-key': ['-', 0, num('jv', 0)],
+        'text-padding': 4,
+      },
+      paint: {
+        'text-color': listingTagColor(),
+        'text-opacity': fade(13, 13.4, 1),
+        'icon-opacity': fade(13, 13.4, 1),
+      },
+    },
+  ] as unknown as LayerSpecification[];
 }
 
 /** Filter for a parcel layer id (the rim layer gets the rim variant). */

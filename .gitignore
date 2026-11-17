@@ -21,3 +21,9 @@ pipeline/raw_sample/
 .idea/
 .vscode/
 .claude/
+
+# Listing source files (your own listings, MLS or vendor exports): licensed data, kept off the public repo.
+# The importer's output in web/public/data/listings/ is what the site serves.
+pipeline/listings/*
+!pipeline/listings/README.md
+!pipeline/listings/TEMPLATE.csv
